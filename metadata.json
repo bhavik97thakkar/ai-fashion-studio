@@ -1,0 +1,5 @@
+{
+  "name": "Copy of AI Fashion Photoshoot Director",
+  "description": "Upload a garment image, choose a scene, and let AI generate a complete, professional, multi-angle photoshoot. Features AI-powered garment analysis, model generation, and scene creation. Includes an image editor and a separate text-to-image generator.",
+  "requestFramePermissions": []
+}
