@@ -5,6 +5,8 @@
   <meta charset="UTF-8" />
   <link rel="icon" type="image/svg+xml" href="/vite.svg" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Fix for Google Auth COOP issue -->
+  <meta http-equiv="Cross-Origin-Opener-Policy" content="same-origin-allow-popups">
   <title>AI Fashion Photoshoot Director</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -25,7 +27,6 @@
 
 <body class="bg-gray-900 text-gray-100">
   <div id="root"></div>
-  <!-- Using relative path for Vite build compatibility -->
   <script type="module" src="./index.tsx"></script>
 </body>
 

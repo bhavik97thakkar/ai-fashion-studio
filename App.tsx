@@ -90,7 +90,11 @@ const App: React.FC = () => {
           const analysis = await geminiService.analyzeGarment(g.preview);
           setGarments(prev => prev.map(item => item.id === g.id ? { ...item, analysis, isLoading: false } : item));
         } catch (e: any) {
-          setError(e.message === "AUTH_ERROR" ? "Missing or invalid API Key in project settings." : "Analysis failed.");
+          if (e.message === "QUOTA_EXCEEDED") {
+            setError("API Quota exceeded. Please wait a minute or check your Google Cloud Billing.");
+          } else {
+            setError(e.message === "AUTH_ERROR" ? "Missing or invalid API Key." : "Analysis failed.");
+          }
           setGarments(prev => prev.map(item => item.id === g.id ? { ...item, isLoading: false } : item));
         }
       }
@@ -116,10 +120,18 @@ const App: React.FC = () => {
         customBackgroundImage, customModelImage,
         POSES.filter(p => selectedPoses.includes(p.id)).map(p => p.description)
       );
-      setGeneratedImages(items);
-      setUsage(prev => ({ ...prev, count: Math.max(0, prev.count - selectedPoses.length) }));
+      if (items.length === 0) {
+        setError("Generation produced no images. Your API key might not have Image Generation permissions enabled.");
+      } else {
+        setGeneratedImages(items);
+        setUsage(prev => ({ ...prev, count: Math.max(0, prev.count - selectedPoses.length) }));
+      }
     } catch (e: any) {
-      setError("Generation failed. Please check your API key in the dashboard.");
+      if (e.message === "QUOTA_EXCEEDED") {
+        setError("API Quota limit reached. The free tier has strict limits per minute.");
+      } else {
+        setError("Generation failed. Check your API key and permissions.");
+      }
     } finally {
       setIsLoading(false);
     }

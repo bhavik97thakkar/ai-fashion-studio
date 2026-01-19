@@ -10,22 +10,21 @@ import {
 } from "../types";
 import { SCENE_PRESETS } from "../constants";
 
-const TEXT_MODEL = "gemini-3-flash-preview";
-const IMAGE_MODEL = "gemini-2.5-flash-image";
+// Using Gemini 2.0 Flash as it currently provides the best balance of speed and free-tier availability
+const TEXT_MODEL = "gemini-2.0-flash";
+const IMAGE_MODEL = "gemini-2.0-flash";
 
 /**
  * PRODUCTION-READY KEY RESOLVER
  * Specifically tuned for GitHub Pages (Vite) and Vercel/Netlify.
  */
 export const getActiveApiKey = () => {
-  // 1. Check for Vite-specific prefix (Required for GitHub Pages/Vercel/Netlify static builds)
-  // 2. Check for standard API_KEY (Fallback)
   const key =
     (import.meta as any).env?.VITE_API_KEY ||
     (import.meta as any).env?.API_KEY ||
     process.env.API_KEY ||
     process.env.VITE_API_KEY ||
-    (window as any)._ENV_?.API_KEY; // Support for runtime config injection
+    (window as any)._ENV_?.API_KEY;
 
   if (
     key &&
@@ -37,24 +36,14 @@ export const getActiveApiKey = () => {
       .replace(/['"‘“’”]+/g, "")
       .replace(/\s/g, "")
       .trim();
-
-    // Safety Log: Only visible in DevTools to confirm the key is loaded
-    console.log(
-      `[STUDIO-AI] API Key Loaded Successfully (${cleanKey.substring(0, 4)}...${cleanKey.substring(cleanKey.length - 4)})`,
-    );
     return cleanKey;
   }
-
-  console.warn(
-    "[STUDIO-AI] WARNING: No valid API Key found. If hosting on GitHub, ensure VITE_API_KEY is set in your Secrets.",
-  );
   return null;
 };
 
 const getAI = () => {
   const key = getActiveApiKey();
   if (!key) throw new Error("AUTH_ERROR");
-  // Always initialize fresh to catch any runtime changes
   return new GoogleGenAI({ apiKey: key });
 };
 
@@ -116,11 +105,8 @@ export const analyzeGarment = async (
     return JSON.parse(content) as GarmentAnalysis;
   } catch (error: any) {
     console.error("[STUDIO-AI] Analysis Error:", error);
-    if (
-      error.message?.includes("key not valid") ||
-      error.message?.includes("INVALID_ARGUMENT")
-    ) {
-      throw new Error("AUTH_ERROR");
+    if (error.message?.includes("429") || error.message?.includes("quota")) {
+      throw new Error("QUOTA_EXCEEDED");
     }
     throw new Error("ANALYSIS_FAILED");
   }
@@ -146,12 +132,10 @@ export const generatePhotoshoot = async (
   );
   const allGeneratedImages: string[] = [];
 
-  // Process each pose sequentially
   for (let i = 0; i < poses.length; i++) {
     onProgress(i + 1, poses.length);
     const parts: any[] = [...allGarmentParts];
 
-    // Construct detailed prompt
     let prompt = `High-end editorial fashion photography of a model: ${modelDescription}. 
         Pose: ${poses[i]}. Setting: ${sceneDescription}. 
         The model is wearing the uploaded garment perfectly. 
@@ -176,12 +160,12 @@ export const generatePhotoshoot = async (
         model: IMAGE_MODEL,
         contents: [{ parts }],
         config: {
-          imageConfig: {
-            aspectRatio: "3:4",
-          },
+          // Note: imageConfig is only for specific image-only models.
+          // For 2.0-flash we rely on text prompt excellence.
         },
       });
 
+      // Handle both potential response formats
       const imagePart = response.candidates?.[0]?.content?.parts.find(
         (p) => p.inlineData,
       );
@@ -189,9 +173,15 @@ export const generatePhotoshoot = async (
         allGeneratedImages.push(
           `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`,
         );
+      } else if (response.text) {
+        // If it returns text instead of an image, it's a model limitation on the free tier
+        console.warn(
+          "Model returned text instead of image. Check if your project has Image Generation enabled.",
+        );
       }
-    } catch (e) {
-      console.error(`[STUDIO-AI] Failed to render pose: ${poses[i]}`, e);
+    } catch (e: any) {
+      console.error(`[STUDIO-AI] Render Error:`, e);
+      if (e.message?.includes("429")) throw new Error("QUOTA_EXCEEDED");
     }
   }
 
