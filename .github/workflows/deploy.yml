@@ -22,8 +22,7 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          # This maps your GitHub Secret to the Environment Variable Vite uses
-          API_KEY: ${{ secrets.API_KEY }}
+          VITE_API_KEY: ${{ secrets.API_KEY }}
       - name: Setup Pages
         uses: actions/configure-pages@v4
       - name: Upload artifact
