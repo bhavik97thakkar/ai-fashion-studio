@@ -55,7 +55,7 @@ export const analyzeGarment = async (
       contents: {
         parts: [
           {
-            text: "Fashion Expert: Analyze this garment. Provide high-accuracy details for commercial AI photoshoot generation. Focus on texture, silhouette, and primary brand colors.",
+            text: "AI Stylist: Extract garment metadata. Identify: Type, Fabric, fit/silhouette, primary colors, and gender target. Be concise.",
           },
           imagePart,
         ],
@@ -87,7 +87,7 @@ export const analyzeGarment = async (
     return JSON.parse(response.text || "{}");
   } catch (error: any) {
     if (isRetryableError(error) && retryCount < 3) {
-      await delay(1500 * Math.pow(2, retryCount));
+      await delay(1000 * Math.pow(2, retryCount));
       return analyzeGarment(base64Image, retryCount + 1);
     }
     return handleGeminiError(error);
@@ -106,20 +106,17 @@ export const generatePhotoshoot = async (
   onProgress: (index: number, total: number, isRetrying?: boolean) => void,
 ): Promise<PhotoshootImage[]> => {
   const sceneDescription =
-    SCENE_PRESETS.find((s) => s.id === sceneId)?.description ||
-    "Professional studio lighting";
+    SCENE_PRESETS.find((s) => s.id === sceneId)?.description || "Studio";
   const results: PhotoshootImage[] = [];
 
-  // Prompt engineering focused on consistency and professional quality
   const baseVisualRules = `
-        Fashion Campaign Photography.
-        Model Identity: ${modelPrompt}.
-        Background: ${sceneDescription}.
-        Item: ${analysis.style} ${analysis.garmentType} (${analysis.fabric}).
-        Tech Specs: 8k resolution, cinematic lighting, sharp focus on fabric texture.
+        High-End Fashion Editorial.
+        Model: ${modelPrompt}.
+        Scene: ${sceneDescription}.
+        Garment: ${analysis.style} ${analysis.garmentType} (${analysis.fabric}).
+        Quality: 8k resolution, cinematic studio lighting, sharp focus.
     `;
 
-  // The Master Reference anchors the model's face and the specific background environment
   let masterReferenceB64: string | null = null;
 
   for (let i = 0; i < poses.length; i++) {
@@ -134,25 +131,22 @@ export const generatePhotoshoot = async (
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
         const parts: any[] = [];
 
-        // Add the garment as the product reference
         parts.push(fileToGenerativePart(garmentImage, "image/jpeg"));
 
-        // If we've already generated the first image, use it to lock model & background
         if (masterReferenceB64) {
           parts.push(fileToGenerativePart(masterReferenceB64, "image/png"));
         }
 
         const frameSpecificInstruction = `
-                    Current Pose: ${poses[i]}.
-                    Consistency Requirements:
-                    1. USE THE EXACT SAME MODEL FACE, HAIR STYLE, AND SKIN TONE AS THE REFERENCE IMAGE.
-                    2. KEEP THE BACKGROUND ENVIRONMENT AND LIGHTING IDENTICAL.
-                    3. Only update the character's pose and orientation.
+                    MANDATORY CONSISTENCY (STRICT ANCHORING):
+                    1. CLONE THE MODEL: Reproduce the exact same face, eye color, hair style, and skin tone from the reference image.
+                    2. UNIFORM ENVIRONMENT: Keep the background and lighting sources 100% identical.
+                    3. TASK: Modify ONLY the pose to: ${poses[i]}.
                 `;
 
         const finalPrompt = masterReferenceB64
           ? `${baseVisualRules}\n${frameSpecificInstruction}`
-          : `${baseVisualRules}\nInitial Shot: Establish model face and background atmosphere. Pose: ${poses[i]}.`;
+          : `${baseVisualRules}\nEstablish Model Identity. Pose: ${poses[i]}.`;
 
         parts.push({ text: finalPrompt });
 
@@ -170,7 +164,7 @@ export const generatePhotoshoot = async (
         if (imagePart?.inlineData) {
           const b64 = imagePart.inlineData.data;
           results.push({
-            id: `shot-${Date.now()}-${i}`,
+            id: `shot-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 5)}`,
             src: `data:image/png;base64,${b64}`,
           });
 
@@ -179,7 +173,7 @@ export const generatePhotoshoot = async (
           }
           success = true;
         } else {
-          throw new Error("API failed to return image data");
+          throw new Error("Image Generation Failed");
         }
       } catch (error: any) {
         if (isRetryableError(error)) {
@@ -189,7 +183,7 @@ export const generatePhotoshoot = async (
             continue;
           }
         }
-        return handleGeminiError(error);
+        throw error; // Let the caller handle major failures
       }
     }
   }
@@ -208,9 +202,7 @@ export const editImage = async (
       contents: {
         parts: [
           fileToGenerativePart(base64Image, "image/jpeg"),
-          {
-            text: `Refine fashion image. Prompt: ${prompt}. Do not change the model identity or the garment structure.`,
-          },
+          { text: `Refine: ${prompt}. Maintain model/garment identity.` },
         ],
       },
       config: {
@@ -220,7 +212,7 @@ export const editImage = async (
     const part = response.candidates?.[0]?.content?.parts.find(
       (p) => p.inlineData,
     );
-    if (!part?.inlineData) throw new Error("Edit operation failed");
+    if (!part?.inlineData) throw new Error("Edit failed");
     return `data:image/png;base64,${part.inlineData.data}`;
   } catch (error: any) {
     if (isRetryableError(error) && retryCount < 2) {

@@ -144,12 +144,11 @@ const App: React.FC = () => {
       return;
     }
 
-    // COST LOGIC: One credit per final selected pose
     const totalPosesToGenerate = selectedPoses.length;
     const currentRemaining = DAILY_LIMIT - usage.count;
     
     if (currentRemaining < totalPosesToGenerate) {
-      setError(`Insufficient credits. Session requires ${totalPosesToGenerate}, but you only have ${currentRemaining} left.`);
+      setError(`Insufficient credits. You need ${totalPosesToGenerate} but have ${currentRemaining} remaining.`);
       return;
     }
 
@@ -161,7 +160,7 @@ const App: React.FC = () => {
       const modelPrompt = `${selectedGender}, age ${selectedAge}, ${selectedEthnicity}, ${selectedBodyType}. ${creativeDetails}`;
       const poseOptions = POSES.filter(p => selectedPoses.includes(p.id));
       
-      // Iterate strictly through the poses, cycling through the reference images
+      // We process one by one to ensure partial success is captured
       for (let i = 0; i < poseOptions.length; i++) {
         const poseObj = poseOptions[i];
         const garmentIndex = i % garments.length;
@@ -169,23 +168,29 @@ const App: React.FC = () => {
         
         if (!g.analysis) continue;
 
-        setLoadingMessage(`PRODUCING COLLECTION: FRAME ${i + 1}/${poseOptions.length}`);
+        setLoadingMessage(`PRODUCING: FRAME ${i + 1}/${poseOptions.length}`);
 
-        const garmentImages = await geminiService.generatePhotoshoot(
-          g.preview,
-          g.analysis,
-          selectedSceneId,
-          modelPrompt,
-          [poseObj.description],
-          (idx, total, isRetrying) => {
-             if (isRetrying) setLoadingMessage(`RETRYING FRAME ${i + 1}/${poseOptions.length}...`);
-          }
-        );
-        allSessionImages = [...allSessionImages, ...garmentImages];
+        try {
+          const garmentImages = await geminiService.generatePhotoshoot(
+            g.preview,
+            g.analysis,
+            selectedSceneId,
+            modelPrompt,
+            [poseObj.description],
+            (idx, total, isRetrying) => {
+               if (isRetrying) setLoadingMessage(`RETRYING FRAME ${i + 1}/${poseOptions.length}...`);
+            }
+          );
+          allSessionImages = [...allSessionImages, ...garmentImages];
+          // Commit results progressively to state
+          setGeneratedImages([...allSessionImages]);
+        } catch (innerError) {
+          console.error("Frame generation failed:", innerError);
+          // If a frame fails, we keep going with what we have
+        }
       }
 
       if (allSessionImages.length > 0) {
-        setGeneratedImages(allSessionImages);
         const newTotalUsed = usage.count + allSessionImages.length;
         const newUsage = { ...usage, count: newTotalUsed };
         setUsage(newUsage);
@@ -206,13 +211,14 @@ const App: React.FC = () => {
         setTimeout(() => {
           document.getElementById('production-output')?.scrollIntoView({ behavior: 'smooth' });
         }, 100);
+      } else {
+        setError("Production session failed. No images were generated.");
       }
     } catch (e: any) {
       if (e.message === "RESELECT_KEY") {
-        setError("Production session expired. Please re-select your API key.");
         window.aistudio?.openSelectKey();
       } else {
-        setError("Production was interrupted. Credits were not deducted.");
+        setError("Critical studio error. Credits were not deducted.");
       }
     } finally {
       setIsLoading(false);
