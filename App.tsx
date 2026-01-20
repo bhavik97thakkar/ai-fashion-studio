@@ -15,7 +15,7 @@ import Loader from './components/Loader';
 import ModelOptions from './components/ModelOptions';
 
 const GOOGLE_CLIENT_ID = "309212162577-8tjqu29ece6h0dv9q0bh5h8h80ki0mgn.apps.googleusercontent.com";
-const DAILY_LIMIT = 5;
+const DAILY_LIMIT = 20; // Increased limit for multi-garment sessions
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(() => {
@@ -112,39 +112,73 @@ const App: React.FC = () => {
     }
   }, [user, syncAllUserData]);
 
+  const processUploads = async (files: File[]) => {
+    const newGarments = await Promise.all(files.map(async file => ({
+      id: `${file.name}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      file,
+      preview: await fileToBase64(file),
+      analysis: null,
+      isLoading: true,
+    })));
+    
+    setGarments(prev => [...prev, ...newGarments]);
+
+    // Batch process analysis
+    for (const g of newGarments) {
+      try {
+        const analysis = await geminiService.analyzeGarment(g.preview);
+        setGarments(prev => prev.map(item => item.id === g.id ? { ...item, analysis, isLoading: false } : item));
+      } catch (err: any) {
+        setGarments(prev => prev.map(item => item.id === g.id ? { ...item, isLoading: false, error: "Analysis failed" } : item));
+        if (err.message === "RESELECT_KEY") window.aistudio?.openSelectKey();
+      }
+    }
+  };
+
   const handleGenerate = async () => {
     if (!user) {
       setError("Please sign in to generate images.");
       return;
     }
 
+    const totalPosesNeeded = garments.length * selectedPoses.length;
     const remaining = DAILY_LIMIT - usage.count;
-    if (remaining <= 0) {
-      setError("Daily limit reached.");
+    
+    if (remaining < totalPosesNeeded) {
+      setError(`Insufficient credits. You need ${totalPosesNeeded} but only have ${remaining} left.`);
       return;
     }
 
     setIsLoading(true);
     setError(null);
+    let allSessionImages: PhotoshootImage[] = [];
+
     try {
       const modelPrompt = `${selectedGender}, age ${selectedAge}, ${selectedEthnicity}, ${selectedBodyType}. ${creativeDetails}`;
       const poseDescriptions = POSES.filter(p => selectedPoses.includes(p.id)).map(p => p.description);
       
-      const images = await geminiService.generatePhotoshoot(
-        garments[0].preview,
-        garments[0].analysis!,
-        selectedSceneId,
-        modelPrompt,
-        poseDescriptions,
-        (idx, total, isRetrying) => {
-          const baseMsg = `Crafting Frame ${idx}/${total}... HD rendering takes ~15s per pose.`;
-          setLoadingMessage(isRetrying ? `Server busy. Retrying Frame ${idx}/${total}...` : baseMsg);
-        }
-      );
+      // Loop through all uploaded garments for batch production
+      for (let i = 0; i < garments.length; i++) {
+        const g = garments[i];
+        if (!g.analysis) continue;
 
-      if (images.length > 0) {
-        setGeneratedImages(images);
-        const newCount = usage.count + images.length;
+        const garmentImages = await geminiService.generatePhotoshoot(
+          g.preview,
+          g.analysis,
+          selectedSceneId,
+          modelPrompt,
+          poseDescriptions,
+          (idx, total, isRetrying) => {
+            const baseMsg = `Producing Item ${i + 1}/${garments.length} | Frame ${idx}/${total}`;
+            setLoadingMessage(isRetrying ? `Server busy. Retrying Frame ${idx}/${total}...` : baseMsg);
+          }
+        );
+        allSessionImages = [...allSessionImages, ...garmentImages];
+      }
+
+      if (allSessionImages.length > 0) {
+        setGeneratedImages(allSessionImages);
+        const newCount = usage.count + allSessionImages.length;
         const newUsage = { ...usage, count: newCount };
         setUsage(newUsage);
         localStorage.setItem(`usage_limit_${user.email}`, JSON.stringify(newUsage));
@@ -154,7 +188,7 @@ const App: React.FC = () => {
           id: Date.now().toString(),
           timestamp: new Date().toISOString(),
           garmentPreview: garments[0].preview, 
-          images: images,
+          images: allSessionImages,
           details: modelPrompt
         };
         const newHistory = [newEntry, ...history].slice(0, 15);
@@ -170,7 +204,7 @@ const App: React.FC = () => {
         setError("Production session expired. Please re-select your API key.");
         window.aistudio?.openSelectKey();
       } else {
-        setError("Server is temporarily unavailable (503). This often happens when the HD model is under heavy load. Please try again in a few seconds.");
+        setError("Production was interrupted. Please check your connection and try again.");
       }
     } finally {
       setIsLoading(false);
@@ -178,23 +212,20 @@ const App: React.FC = () => {
   };
 
   const togglePose = (poseId: string) => {
-    const remaining = DAILY_LIMIT - usage.count;
     setSelectedPoses(prev => {
       if (prev.includes(poseId)) {
         return prev.length > 1 ? prev.filter(i => i !== poseId) : prev;
       } else {
         if (prev.length >= 5) return prev;
-        if (prev.length + 1 > remaining) {
-          setError(`Limit reached. ${remaining} credits left.`);
-          return prev;
-        }
         return [...prev, poseId];
       }
     });
   };
 
+  const totalSelectedPoses = garments.length * selectedPoses.length;
   const isOverLimit = usage.count >= DAILY_LIMIT;
-  const willExceedLimit = (usage.count + selectedPoses.length) > DAILY_LIMIT;
+  const willExceedLimit = (usage.count + totalSelectedPoses) > DAILY_LIMIT;
+  const allAnalyzed = garments.length > 0 && garments.every(g => !g.isLoading && !!g.analysis);
 
   if (!hasKey) {
     return (
@@ -237,61 +268,25 @@ const App: React.FC = () => {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-16">
               <div className="space-y-10">
                 <div className="flex justify-between items-end border-b border-gray-800 pb-6">
-                  <h2 className="text-5xl font-black uppercase tracking-tighter italic">Moodboard</h2>
-                  <button onClick={() => fileInputRef.current?.click()} className="text-[11px] font-black uppercase text-cyan-500 hover:text-cyan-300 transition-colors tracking-[0.2em]">+ Add Reference</button>
-                  <input type="file" ref={fileInputRef} onChange={(e) => e.target.files && (async () => {
-                    const files = Array.from(e.target.files!);
-                    const newGarments = await Promise.all(files.map(async file => ({
-                      id: `${file.name}-${Date.now()}`,
-                      file,
-                      preview: await fileToBase64(file),
-                      analysis: null,
-                      isLoading: true,
-                    })));
-                    setGarments(newGarments);
-                    
-                    if (newGarments.length > 0) {
-                      try {
-                        const analysis = await geminiService.analyzeGarment(newGarments[0].preview);
-                        setGarments(prev => prev.map(g => g.id === newGarments[0].id ? { ...g, analysis, isLoading: false } : g));
-                      } catch (err: any) {
-                        setGarments(prev => prev.map(g => g.id === newGarments[0].id ? { ...g, isLoading: false, error: "Analysis failed" } : g));
-                        if (err.message === "RESELECT_KEY") window.aistudio?.openSelectKey();
-                      }
-                    }
-                  })()} className="hidden" accept="image/*" />
+                  <h2 className="text-5xl font-black uppercase tracking-tighter italic">Collection</h2>
+                  <button onClick={() => fileInputRef.current?.click()} className="text-[11px] font-black uppercase text-cyan-500 hover:text-cyan-300 transition-colors tracking-[0.2em]">+ Add Garment</button>
+                  <input type="file" ref={fileInputRef} onChange={(e) => e.target.files && processUploads(Array.from(e.target.files))} className="hidden" accept="image/*" multiple />
                 </div>
                 
                 {garments.length === 0 ? (
-                  <ImageUploader onImageUpload={async (files) => {
-                    const newGarments = await Promise.all(files.map(async file => ({
-                      id: `${file.name}-${Date.now()}`,
-                      file,
-                      preview: await fileToBase64(file),
-                      analysis: null,
-                      isLoading: true,
-                    })));
-                    setGarments(newGarments);
-                    if (newGarments.length > 0) {
-                      try {
-                        const analysis = await geminiService.analyzeGarment(newGarments[0].preview);
-                        setGarments(prev => prev.map(g => g.id === newGarments[0].id ? { ...g, analysis, isLoading: false } : g));
-                      } catch (err: any) {
-                        setGarments(prev => prev.map(g => g.id === newGarments[0].id ? { ...g, isLoading: false, error: "Analysis failed" } : g));
-                      }
-                    }
-                  }} />
+                  <ImageUploader onImageUpload={processUploads} />
                 ) : (
                   <div className="grid grid-cols-2 gap-6">
                     {garments.map(g => (
-                      <div key={g.id} className="relative aspect-[3/4] rounded-[2.5rem] overflow-hidden border border-gray-800 bg-black shadow-2xl group">
+                      <div key={g.id} className="relative aspect-[3/4] rounded-[2.5rem] overflow-hidden border border-gray-800 bg-black shadow-2xl group animate-in zoom-in-95 duration-500">
                         <img src={g.preview} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
                         {g.isLoading && (
-                          <div className="absolute inset-0 bg-black/80 flex items-center justify-center backdrop-blur-md">
-                            <div className="w-10 h-10 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
+                          <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md">
+                            <div className="w-8 h-8 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mb-3"></div>
+                            <span className="text-[9px] font-black uppercase tracking-widest text-cyan-500">Analyzing...</span>
                           </div>
                         )}
-                        <button onClick={() => setGarments([])} className="absolute top-6 right-6 bg-black/50 text-white w-10 h-10 flex items-center justify-center rounded-full hover:bg-red-500 transition-colors backdrop-blur-md opacity-0 group-hover:opacity-100">×</button>
+                        <button onClick={() => setGarments(prev => prev.filter(item => item.id !== g.id))} className="absolute top-6 right-6 bg-black/50 text-white w-10 h-10 flex items-center justify-center rounded-full hover:bg-red-500 transition-all backdrop-blur-md opacity-0 group-hover:opacity-100 shadow-xl border border-white/10">×</button>
                       </div>
                     ))}
                   </div>
@@ -308,7 +303,7 @@ const App: React.FC = () => {
                         <div key={entry.id} className="group/session animate-in fade-in slide-in-from-left-5">
                            <div className="flex justify-between items-center px-2 mb-3">
                               <span className="text-[9px] font-black text-gray-600 uppercase tracking-widest">{new Date(entry.timestamp).toLocaleDateString([], {month:'short', day:'numeric'})}</span>
-                              <span className="text-[9px] font-black text-cyan-500/40 uppercase tracking-widest group-hover/session:text-cyan-400 transition-colors">{entry.images.length} Poses</span>
+                              <span className="text-[9px] font-black text-cyan-500/40 uppercase tracking-widest group-hover/session:text-cyan-400 transition-colors">{entry.images.length} Assets Produced</span>
                            </div>
                            <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide snap-x px-1">
                             {entry.images.map((img) => (
@@ -344,7 +339,7 @@ const App: React.FC = () => {
                 <div className="space-y-6">
                   <div className="flex justify-between items-center px-1">
                     <h3 className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Shoot Profile</h3>
-                    <span className="text-[10px] font-black text-cyan-500 uppercase bg-cyan-500/10 px-3 py-1 rounded-full">{selectedPoses.length}/5 Selected</span>
+                    <span className="text-[10px] font-black text-cyan-500 uppercase bg-cyan-500/10 px-3 py-1 rounded-full">{selectedPoses.length}/5 Poses Per Item</span>
                   </div>
                   <div className="flex flex-wrap gap-2.5">
                     {POSES.map(p => (
@@ -367,14 +362,14 @@ const App: React.FC = () => {
                 <div className="pt-6 space-y-6">
                   <button 
                     onClick={handleGenerate} 
-                    disabled={isLoading || garments.length === 0 || isOverLimit || willExceedLimit || !garments[0]?.analysis} 
+                    disabled={isLoading || garments.length === 0 || isOverLimit || willExceedLimit || !allAnalyzed} 
                     className={`w-full font-black py-7 rounded-[2rem] shadow-2xl uppercase tracking-[0.5em] text-[11px] italic transition-all active:scale-[0.98] ${
-                      (isOverLimit || willExceedLimit)
+                      (isOverLimit || willExceedLimit || !allAnalyzed)
                       ? 'bg-gray-800/50 text-gray-700 cursor-not-allowed border border-gray-800' 
                       : 'bg-cyan-500 hover:bg-cyan-400 text-white shadow-cyan-500/30'
                     }`}
                   >
-                    {isOverLimit ? 'Daily Limit Reached' : willExceedLimit ? 'Insufficient Credits' : 'Launch Production'}
+                    {!allAnalyzed && garments.length > 0 ? 'Analyzing Collection...' : isOverLimit ? 'Daily Limit Reached' : willExceedLimit ? 'Insufficient Credits' : `Launch Campaign (${totalSelectedPoses} Renders)`}
                   </button>
                   <div className="flex justify-between items-center px-6">
                     <div className="flex flex-col">
@@ -382,8 +377,8 @@ const App: React.FC = () => {
                       <p className="text-base font-black text-cyan-500 tracking-tighter">{Math.max(0, DAILY_LIMIT - usage.count)} Remaining</p>
                     </div>
                     <div className="text-right">
-                      <p className="text-[10px] text-gray-600 uppercase font-black tracking-[0.2em]">Account Status</p>
-                      <p className="text-[11px] font-bold text-gray-400 truncate max-w-[140px] lowercase">{user.email}</p>
+                      <p className="text-[10px] text-gray-600 uppercase font-black tracking-[0.2em]">Session</p>
+                      <p className="text-[11px] font-bold text-gray-400 truncate max-w-[140px] lowercase">{garments.length} Items Queued</p>
                     </div>
                   </div>
                 </div>
@@ -392,7 +387,7 @@ const App: React.FC = () => {
 
             {generatedImages.length > 0 && (
               <div id="production-output" className="pt-20 border-t border-gray-800 animate-in fade-in slide-in-from-bottom-12 duration-1000">
-                <h2 className="text-5xl font-black uppercase tracking-tighter mb-16 text-center italic">Final <span className="text-cyan-500">Renders</span></h2>
+                <h2 className="text-5xl font-black uppercase tracking-tighter mb-16 text-center italic">Campaign <span className="text-cyan-500">Output</span></h2>
                 <PhotoshootGallery images={generatedImages} onEditRequest={setEditingImage} isPro={true} />
               </div>
             )}
