@@ -12,6 +12,19 @@ const fileToGenerativePart = (base64Data: string, mimeType: string) => {
   };
 };
 
+const handleGeminiError = (error: any) => {
+  const msg = error.message?.toLowerCase() || "";
+  if (
+    msg.includes("not found") ||
+    msg.includes("404") ||
+    msg.includes("api_key") ||
+    msg.includes("invalid")
+  ) {
+    throw new Error("RESELECT_KEY");
+  }
+  throw error;
+};
+
 export const analyzeGarment = async (
   base64Image: string,
 ): Promise<GarmentAnalysis> => {
@@ -55,13 +68,7 @@ export const analyzeGarment = async (
 
     return JSON.parse(response.text || "{}");
   } catch (error: any) {
-    if (
-      error.message?.toLowerCase().includes("not found") ||
-      error.message?.includes("404")
-    ) {
-      throw new Error("RESELECT_KEY");
-    }
-    throw error;
+    return handleGeminiError(error);
   }
 };
 
@@ -79,7 +86,6 @@ export const generatePhotoshoot = async (
     "Professional Studio";
   const results: PhotoshootImage[] = [];
 
-  // The core style DNA
   const baseSystemPrompt = `
         HIGH-END FASHION EDITORIAL. 
         Model characteristics: ${modelPrompt}. 
@@ -99,14 +105,12 @@ export const generatePhotoshoot = async (
       let promptText = "";
 
       if (i === 0) {
-        // ESTABLISH THE LOOK
         promptText = `
                     ${baseSystemPrompt}
                     ACTION: Full body fashion shot, ${poses[i]}.
                     IMPORTANT: This is the reference frame. Create a distinct, high-quality model face and environment.
                 `.trim();
       } else if (masterReferenceB64) {
-        // ENFORCE THE LOOK
         parts.push(fileToGenerativePart(masterReferenceB64, "image/png"));
         promptText = `
                     ${baseSystemPrompt}
@@ -141,18 +145,12 @@ export const generatePhotoshoot = async (
           src: `data:image/png;base64,${b64}`,
         });
 
-        // We keep the VERY FIRST image as the master visual anchor for all subsequent generations
         if (i === 0) {
           masterReferenceB64 = b64;
         }
       }
     } catch (error: any) {
-      if (
-        error.message?.toLowerCase().includes("not found") ||
-        error.message?.includes("404")
-      )
-        throw new Error("RESELECT_KEY");
-      console.error(`Pose ${i} failed:`, error);
+      return handleGeminiError(error);
     }
   }
   return results;
@@ -162,34 +160,42 @@ export const editImage = async (
   base64Image: string,
   prompt: string,
 ): Promise<string> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
-  const response = await ai.models.generateContent({
-    model: IMAGE_MODEL,
-    contents: {
-      parts: [
-        fileToGenerativePart(base64Image, "image/jpeg"),
-        {
-          text: `Refine this fashion photograph: ${prompt}. Maintain strict model identity and background consistency.`,
-        },
-      ],
-    },
-  });
-  const part = response.candidates?.[0]?.content?.parts.find(
-    (p) => p.inlineData,
-  );
-  if (!part?.inlineData) throw new Error("Edit failed");
-  return `data:image/png;base64,${part.inlineData.data}`;
+  try {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
+    const response = await ai.models.generateContent({
+      model: IMAGE_MODEL,
+      contents: {
+        parts: [
+          fileToGenerativePart(base64Image, "image/jpeg"),
+          {
+            text: `Refine this fashion photograph: ${prompt}. Maintain strict model identity and background consistency.`,
+          },
+        ],
+      },
+    });
+    const part = response.candidates?.[0]?.content?.parts.find(
+      (p) => p.inlineData,
+    );
+    if (!part?.inlineData) throw new Error("Edit failed");
+    return `data:image/png;base64,${part.inlineData.data}`;
+  } catch (error: any) {
+    return handleGeminiError(error);
+  }
 };
 
 export const generateImage = async (prompt: string): Promise<string> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
-  const response = await ai.models.generateContent({
-    model: IMAGE_MODEL,
-    contents: prompt,
-  });
-  const part = response.candidates?.[0]?.content?.parts.find(
-    (p) => p.inlineData,
-  );
-  if (!part?.inlineData) throw new Error("Generation failed");
-  return `data:image/png;base64,${part.inlineData.data}`;
+  try {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
+    const response = await ai.models.generateContent({
+      model: IMAGE_MODEL,
+      contents: prompt,
+    });
+    const part = response.candidates?.[0]?.content?.parts.find(
+      (p) => p.inlineData,
+    );
+    if (!part?.inlineData) throw new Error("Generation failed");
+    return `data:image/png;base64,${part.inlineData.data}`;
+  } catch (error: any) {
+    return handleGeminiError(error);
+  }
 };

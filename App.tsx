@@ -29,12 +29,7 @@ const App: React.FC = () => {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
 
   const syncAllUserData = useCallback(async (email: string) => {
-    console.log(`[Sync] Verifying credits for ${email}...`);
-    
-    // 1. Fetch from Cloud (Supabase)
     const cloudUsage = await cloudDB.syncUsageFromCloud(email);
-    
-    // 2. Fetch from Local
     const usageKey = `usage_limit_${email}`;
     const historyKey = `history_${email}`;
     const savedUsage = localStorage.getItem(usageKey);
@@ -44,6 +39,8 @@ const App: React.FC = () => {
     let currentUsage: UsageLimit;
 
     if (cloudUsage) {
+      currentUsage = { count: cloudUsage.count, last_reset: cloudUsage.last_reset } as any;
+      // Map cloud keys to our local type if needed
       currentUsage = { count: cloudUsage.count, lastReset: cloudUsage.last_reset };
     } else if (savedUsage) {
       currentUsage = JSON.parse(savedUsage);
@@ -51,11 +48,9 @@ const App: React.FC = () => {
       currentUsage = { count: 0, lastReset: now.toISOString() };
     }
 
-    // Daily Reset Check logic (Applies to both Cloud and Local state)
     const lastDate = new Date(currentUsage.lastReset).toDateString();
     if (now.toDateString() !== lastDate) {
       currentUsage = { count: 0, lastReset: now.toISOString() };
-      // Sync the reset back to cloud if user is logged in
       cloudDB.updateUsageInCloud(email, 0, now.toISOString());
     }
     
@@ -89,16 +84,20 @@ const App: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    const checkKey = async () => {
-      if (window.aistudio?.hasSelectedApiKey) {
-        setHasKey(await window.aistudio.hasSelectedApiKey());
-      } else {
-        setHasKey(!!process.env.API_KEY);
-      }
-    };
-    checkKey();
+  const checkKey = useCallback(async () => {
+    if (window.aistudio?.hasSelectedApiKey) {
+      const active = await window.aistudio.hasSelectedApiKey();
+      setHasKey(active);
+      return active;
+    }
+    const envKey = !!process.env.API_KEY;
+    setHasKey(envKey);
+    return envKey;
   }, []);
+
+  useEffect(() => {
+    checkKey();
+  }, [checkKey]);
 
   useEffect(() => {
     if (window.google) {
@@ -119,12 +118,7 @@ const App: React.FC = () => {
 
     const remaining = DAILY_LIMIT - usage.count;
     if (remaining <= 0) {
-      setError("Daily limit reached. Credits sync across your account.");
-      return;
-    }
-
-    if (selectedPoses.length > remaining) {
-      setError(`Only ${remaining} credits left today.`);
+      setError("Daily limit reached.");
       return;
     }
 
@@ -147,15 +141,10 @@ const App: React.FC = () => {
         setGeneratedImages(images);
         const newCount = usage.count + images.length;
         const newUsage = { ...usage, count: newCount };
-        
-        // UPDATE LOCAL
         setUsage(newUsage);
         localStorage.setItem(`usage_limit_${user.email}`, JSON.stringify(newUsage));
-        
-        // UPDATE CLOUD (The key fix for Incognito)
         await cloudDB.updateUsageInCloud(user.email, newCount, usage.lastReset);
         
-        // Update History
         const newEntry: HistoryEntry = {
           id: Date.now().toString(),
           timestamp: new Date().toISOString(),
@@ -168,7 +157,12 @@ const App: React.FC = () => {
         localStorage.setItem(`history_${user.email}`, JSON.stringify(newHistory));
       }
     } catch (e: any) {
-      setError("Production interrupted. Check your network or API key.");
+      if (e.message === "RESELECT_KEY") {
+        setError("Your API key session expired or is invalid. Please re-select your key.");
+        window.aistudio?.openSelectKey();
+      } else {
+        setError("Production interrupted. Ensure you have a paid API key selected.");
+      }
     } finally {
       setIsLoading(false);
     }
@@ -180,12 +174,9 @@ const App: React.FC = () => {
       if (prev.includes(poseId)) {
         return prev.length > 1 ? prev.filter(i => i !== poseId) : prev;
       } else {
-        if (prev.length >= 5) {
-          setError("Max 5 poses per shoot.");
-          return prev;
-        }
+        if (prev.length >= 5) return prev;
         if (prev.length + 1 > remaining) {
-          setError(`Limit reached. You have ${remaining} credits left.`);
+          setError(`Limit reached. ${remaining} credits left.`);
           return prev;
         }
         return [...prev, poseId];
@@ -200,7 +191,8 @@ const App: React.FC = () => {
     return (
       <div className="min-h-screen bg-black flex flex-col items-center justify-center p-6 text-center">
         <h2 className="text-4xl font-black text-white mb-6 uppercase italic tracking-tighter">API KEY REQUIRED</h2>
-        <button onClick={() => window.aistudio?.openSelectKey()} className="bg-cyan-500 hover:bg-cyan-400 text-white font-black py-4 px-10 rounded-2xl shadow-2xl uppercase tracking-widest text-xs transition-all hover:scale-105 active:scale-95">Unlock Studio</button>
+        <p className="text-gray-500 mb-8 max-w-md uppercase text-[10px] tracking-widest font-bold">This application uses Gemini 3 Pro Vision which requires a valid paid API key for image generation.</p>
+        <button onClick={() => window.aistudio?.openSelectKey()} className="bg-cyan-500 hover:bg-cyan-400 text-white font-black py-4 px-10 rounded-2xl shadow-2xl uppercase tracking-widest text-xs transition-all hover:scale-105 active:scale-95">Select API Key</button>
       </div>
     );
   }
@@ -210,8 +202,8 @@ const App: React.FC = () => {
       <Header 
         user={user} 
         usage={usage} 
-        onSignIn={() => {}} 
         onSignOut={() => { authService.signOutGoogle(); setUser(null); localStorage.removeItem('auth_user'); }} 
+        onSignIn={() => {}} 
         onUpgrade={() => {}} 
       />
       
@@ -249,7 +241,6 @@ const App: React.FC = () => {
                     })));
                     setGarments(prev => [...prev, ...newGarments]);
                     
-                    // Trigger analysis for the first garment
                     if (newGarments.length > 0) {
                       try {
                         const analysis = await geminiService.analyzeGarment(newGarments[0].preview);
@@ -394,7 +385,8 @@ const App: React.FC = () => {
               const src = await geminiService.editImage(editingImage.src, p);
               setGeneratedImages(prev => prev.map(img => img.id === editingImage.id ? { ...img, src } : img));
               setEditingImage(null);
-            } catch {
+            } catch (err: any) {
+              if (err.message === "RESELECT_KEY") window.aistudio?.openSelectKey();
               setError("Refinement failed.");
             } finally {
               setIsLoading(false);
