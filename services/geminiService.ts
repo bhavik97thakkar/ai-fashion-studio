@@ -2,7 +2,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { GarmentAnalysis, SceneId, PhotoshootImage } from "../types";
 import { SCENE_PRESETS } from "../constants";
 
-// Use Gemini 3 Flash for complex reasoning/analysis and Gemini 2.5 Flash for image generation
+// Models used for specialized tasks
 const ANALYSIS_MODEL = "gemini-3-flash-preview";
 const IMAGE_MODEL = "gemini-2.5-flash-image";
 
@@ -40,7 +40,8 @@ const handleGeminiError = (error: any) => {
 };
 
 /**
- * Deep analysis of garment characteristics, specifically targeting colors and intricate patterns.
+ * Enhanced analysis to extract granular garment details including primary/secondary colors
+ * and intricate embellishments/patterns.
  */
 export const analyzeGarment = async (
   base64Image: string,
@@ -55,7 +56,15 @@ export const analyzeGarment = async (
       contents: {
         parts: [
           {
-            text: "AI Fashion Director: Analyze this garment with extreme precision. Identify: 1. Garment Type. 2. Primary Color. 3. List all secondary colors. 4. Fabric texture and weight. 5. Detailed description of unique patterns, prints, mirror work, or embroidery. 6. Overall fit silhouette. Ensure the color and pattern description is exhaustive for high-fidelity replication.",
+            text: `AI Fashion Director: Perform a technical analysis of this garment. 
+                        EXTRACT:
+                        1. Garment Type (e.g., Anarkali, Blazer, Tunic).
+                        2. Primary Color (The dominant hue).
+                        3. Secondary Colors (List all accent hues, embroidery colors, or print shades).
+                        4. Fabric Texture & Material.
+                        5. Unique Embellishments: Detail any mirror work, thread embroidery, beads, or specific prints.
+                        6. Style & Silhouette: Fit and cut details.
+                        Return as valid JSON.`,
           },
           imagePart,
         ],
@@ -71,14 +80,14 @@ export const analyzeGarment = async (
               type: Type.ARRAY,
               items: { type: Type.STRING },
               description:
-                "Primary color MUST be the first index, followed by all secondary accent colors.",
+                "Primary color at index 0, followed by all secondary/accent colors.",
             },
             style: { type: Type.STRING },
             gender: { type: Type.STRING },
             uniquenessLevel: {
               type: Type.STRING,
               description:
-                "Exhaustive description of patterns, embroidery details, and unique embellishments.",
+                "Exhaustive description of patterns, embroidery, and unique design elements.",
             },
           },
           required: [
@@ -105,7 +114,8 @@ export const analyzeGarment = async (
 };
 
 /**
- * Generates the photoshoot with a strict visual anchor to ensure 1:1 model and background consistency.
+ * Generates the photoshoot using gemini-2.5-flash-image while maintaining
+ * strict visual consistency via a Master Identity Anchor logic.
  */
 export const generatePhotoshoot = async (
   garmentImage: string,
@@ -116,20 +126,21 @@ export const generatePhotoshoot = async (
   onProgress: (index: number, total: number, isRetrying?: boolean) => void,
 ): Promise<PhotoshootImage[]> => {
   const sceneDescription =
-    SCENE_PRESETS.find((s) => s.id === sceneId)?.description || "Studio";
+    SCENE_PRESETS.find((s) => s.id === sceneId)?.description ||
+    "Professional Studio";
   const results: PhotoshootImage[] = [];
 
-  const baseVisualRules = `
-        PROFESSIONAL E-COMMERCE PHOTOGRAPHY. 
+  const baseProductionRules = `
+        PROFESSIONAL FASHION CAMPAIGN. 
         GARMENT FIDELITY: Model MUST wear the EXACT ${analysis.garmentType} from the product reference.
         COLOR LOCK: Primary: ${analysis.colorPalette[0]}, Accents: ${analysis.colorPalette.slice(1).join(", ")}.
-        PATTERN LOCK: Replicate this EXACT embroidery/pattern: ${analysis.uniquenessLevel}.
-        MODEL: ${modelPrompt}.
+        DETAIL LOCK: Replicate this EXACT design/embroidery: ${analysis.uniquenessLevel}.
+        MODEL ATTRIBUTES: ${modelPrompt}.
         SCENE: ${sceneDescription}.
-        TECHNICAL: 8k resolution, photorealistic, sharp focus on fabric texture, high-end commercial lighting.
+        TECHNICAL: 8k, photorealistic, sharp focus, high-end commercial studio lighting.
     `;
 
-  // This variable captures the first successful generation to serve as the visual 'source of truth' for identity and background.
+  // masterFrameB64 serves as the permanent reference for the model's face, hair, and the room lighting.
   let masterFrameB64: string | null = null;
 
   for (let i = 0; i < poses.length; i++) {
@@ -144,25 +155,24 @@ export const generatePhotoshoot = async (
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
         const parts: any[] = [];
 
-        // ALWAYS include the original garment as the primary product reference
+        // PART 1: The original product reference
         parts.push(fileToGenerativePart(garmentImage, "image/jpeg"));
 
-        // If we have a master frame (from frame 2 onwards), include it to force visual consistency
+        // PART 2: The Master Frame Anchor (from shot 2 onwards)
         if (masterFrameB64) {
           parts.push(fileToGenerativePart(masterFrameB64, "image/png"));
         }
 
-        const frameDirective = masterFrameB64
+        const frameInstruction = masterFrameB64
           ? `
                         STRICT VISUAL CONSISTENCY MANDATE:
-                        1. CLONE THE MODEL: You MUST use the EXACT same face, eyes, hair color, and hairstyle from the second reference image. No variations.
-                        2. CLONE THE BACKGROUND: The room geometry, wall color, flooring, and lighting direction MUST be identical to the second reference image.
-                        3. CLONE THE LIGHTING: Maintain the same shadow softess and light temperature.
-                        4. NEW POSE: Maintain all details but change the pose to: ${poses[i]}.
+                        1. CLONE THE MODEL: You MUST use the EXACT same face, eyes, hair texture, and hairstyle from the second reference image. No variations allowed.
+                        2. CLONE THE BACKGROUND: The background geometry, lighting direction, shadows, and environment MUST be identical to the second reference image.
+                        3. GARMENT PERSPECTIVE: Maintain the garment design from the first reference image, but adjusted for this pose: ${poses[i]}.
                       `
-          : `Establish the definitive model identity and background for this campaign. Ensure the model's outfit matches the garment reference exactly. Pose: ${poses[i]}.`;
+          : `Establish the definitive model identity and background environment. The model is wearing the outfit from the first reference image. Pose: ${poses[i]}.`;
 
-        parts.push({ text: `${baseVisualRules}\n${frameDirective}` });
+        parts.push({ text: `${baseProductionRules}\n${frameInstruction}` });
 
         const response = await ai.models.generateContent({
           model: IMAGE_MODEL,
@@ -178,17 +188,17 @@ export const generatePhotoshoot = async (
         if (imagePart?.inlineData) {
           const b64 = imagePart.inlineData.data;
           results.push({
-            id: `shot-${Date.now()}-${i}`,
+            id: `shot-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 5)}`,
             src: `data:image/png;base64,${b64}`,
           });
 
-          // Capture the first shot as the visual anchor for all subsequent poses in this session
+          // Lock the first successful shot as the Master Reference for identity and background
           if (!masterFrameB64) {
             masterFrameB64 = b64;
           }
           success = true;
         } else {
-          throw new Error("Missing image part in response");
+          throw new Error("Empty image response");
         }
       } catch (error: any) {
         if (isRetryableError(error)) {
@@ -218,7 +228,7 @@ export const editImage = async (
         parts: [
           fileToGenerativePart(base64Image, "image/jpeg"),
           {
-            text: `Refine this image while maintaining 100% garment and model identity: ${prompt}`,
+            text: `Refine this fashion image while strictly maintaining the garment design and model identity: ${prompt}`,
           },
         ],
       },
