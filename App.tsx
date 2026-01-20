@@ -16,7 +16,7 @@ import ModelOptions from './components/ModelOptions';
 
 const GOOGLE_CLIENT_ID = "309212162577-8tjqu29ece6h0dv9q0bh5h8h80ki0mgn.apps.googleusercontent.com";
 const DAILY_LIMIT = 5;
-const MAX_HISTORY_ITEMS = 10; // Reduced to manage storage quota
+const MAX_HISTORY_ITEMS = 10;
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(() => {
@@ -26,23 +26,44 @@ const App: React.FC = () => {
   
   const [hasKey, setHasKey] = useState(false);
   
-  const [usage, setUsage] = useState<UsageLimit>(() => {
-    const saved = localStorage.getItem('usage_limit');
-    const now = new Date();
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        const lastDate = new Date(parsed.lastReset).toDateString();
-        if (now.toDateString() !== lastDate) {
-          return { count: 0, lastReset: now.toISOString() };
+  // Usage is now managed in a useEffect to link it to the specific logged-in user email
+  const [usage, setUsage] = useState<UsageLimit>({ count: 0, lastReset: new Date().toISOString() });
+
+  // Load usage specific to the user email when user changes
+  useEffect(() => {
+    if (user) {
+      const usageKey = `usage_limit_${user.email}`;
+      const saved = localStorage.getItem(usageKey);
+      const now = new Date();
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          const lastDate = new Date(parsed.lastReset).toDateString();
+          if (now.toDateString() !== lastDate) {
+            const resetUsage = { count: 0, lastReset: now.toISOString() };
+            setUsage(resetUsage);
+            localStorage.setItem(usageKey, JSON.stringify(resetUsage));
+          } else {
+            setUsage(parsed);
+          }
+        } catch (e) {
+          setUsage({ count: 0, lastReset: now.toISOString() });
         }
-        return parsed;
-      } catch (e) {
-        return { count: 0, lastReset: now.toISOString() };
+      } else {
+        const initialUsage = { count: 0, lastReset: now.toISOString() };
+        setUsage(initialUsage);
+        localStorage.setItem(usageKey, JSON.stringify(initialUsage));
       }
     }
-    return { count: 0, lastReset: now.toISOString() };
-  });
+  }, [user]);
+
+  // Sync usage back to storage whenever it changes
+  useEffect(() => {
+    if (user) {
+      const usageKey = `usage_limit_${user.email}`;
+      localStorage.setItem(usageKey, JSON.stringify(usage));
+    }
+  }, [usage, user]);
 
   const [history, setHistory] = useState<HistoryEntry[]>(() => {
     const saved = localStorage.getItem('photoshoot_history');
@@ -70,17 +91,15 @@ const App: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Robust persistence with quota handling
   const safeSaveHistory = (items: HistoryEntry[]) => {
     let currentItems = [...items];
     while (currentItems.length > 0) {
       try {
         const serialized = JSON.stringify(currentItems);
         localStorage.setItem('photoshoot_history', serialized);
-        break; // Success
+        break;
       } catch (e) {
         if (e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED')) {
-          // Remove the oldest item and try again
           currentItems.pop();
           if (currentItems.length === 0) {
             localStorage.removeItem('photoshoot_history');
@@ -93,10 +112,6 @@ const App: React.FC = () => {
     }
     return currentItems;
   };
-
-  useEffect(() => {
-    localStorage.setItem('usage_limit', JSON.stringify(usage));
-  }, [usage]);
 
   useEffect(() => {
     const prunedHistory = safeSaveHistory(history);
@@ -182,10 +197,18 @@ const App: React.FC = () => {
   }, [garments]);
 
   const handleGenerate = async () => {
+    const remaining = DAILY_LIMIT - usage.count;
+    
     if (usage.count >= DAILY_LIMIT) {
-      setError("Daily production limit reached.");
+      setError("Out of credits for today. Come back tomorrow!");
       return;
     }
+
+    if (selectedPoses.length > remaining) {
+      setError(`Insufficient credits. You only have ${remaining} generation${remaining === 1 ? '' : 's'} left for today, but you selected ${selectedPoses.length} modes.`);
+      return;
+    }
+
     if (garments.length === 0 || !garments[0].analysis) return;
     
     setIsLoading(true);
@@ -205,9 +228,9 @@ const App: React.FC = () => {
 
       if (images.length > 0) {
         setGeneratedImages(images);
-        setUsage(prev => ({ ...prev, count: prev.count + 1 }));
+        // Charge for each image generated
+        setUsage(prev => ({ ...prev, count: prev.count + images.length }));
         
-        // Save the result to history
         const newHistoryEntry: HistoryEntry = {
           id: Date.now().toString(),
           timestamp: new Date().toISOString(),
@@ -231,6 +254,20 @@ const App: React.FC = () => {
     }
   };
 
+  const togglePose = (poseId: string) => {
+    setSelectedPoses(prev => {
+      if (prev.includes(poseId)) {
+        return prev.length > 1 ? prev.filter(i => i !== poseId) : prev;
+      } else {
+        if (prev.length >= 5) {
+          setError("Maximum of 5 modes can be selected at once.");
+          return prev;
+        }
+        return [...prev, poseId];
+      }
+    });
+  };
+
   const loadFromHistory = (entry: HistoryEntry) => {
     setGeneratedImages(entry.images);
     const resultsSection = document.getElementById('production-output');
@@ -238,6 +275,9 @@ const App: React.FC = () => {
       resultsSection.scrollIntoView({ behavior: 'smooth' });
     }
   };
+
+  const isOverLimit = usage.count >= DAILY_LIMIT;
+  const willExceedLimit = usage.count + selectedPoses.length > DAILY_LIMIT;
 
   if (!hasKey) {
     return (
@@ -262,7 +302,7 @@ const App: React.FC = () => {
         {isLoading && <Loader message={loadingMessage} />}
         
         {error && (
-          <div className="mb-8 bg-red-900/20 border border-red-500/30 p-4 rounded-2xl text-red-400 text-xs flex justify-between items-center">
+          <div className="mb-8 bg-red-900/20 border border-red-500/30 p-4 rounded-2xl text-red-400 text-xs flex justify-between items-center animate-pulse">
             <span className="font-bold">{error}</span>
             <button onClick={() => setError(null)} className="font-black uppercase text-[10px] bg-red-500/20 px-3 py-1 rounded-lg">Dismiss</button>
           </div>
@@ -337,10 +377,19 @@ const App: React.FC = () => {
                 />
                 
                 <div className="space-y-6">
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Pose Structure</h3>
+                  <div className="flex justify-between items-center">
+                    <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Pose Structure</h3>
+                    <span className="text-[8px] font-bold text-cyan-500 uppercase">Max 5 Selected</span>
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     {POSES.map(p => (
-                      <button key={p.id} onClick={() => setSelectedPoses(prev => prev.includes(p.id) ? (prev.length > 1 ? prev.filter(i => i !== p.id) : prev) : [...prev, p.id])} className={`px-4 py-2 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all ${selectedPoses.includes(p.id) ? 'bg-cyan-500 border-cyan-500 text-white shadow-lg shadow-cyan-500/20' : 'bg-gray-950 border-gray-800 text-gray-500 hover:border-gray-600'}`}>{p.label}</button>
+                      <button 
+                        key={p.id} 
+                        onClick={() => togglePose(p.id)} 
+                        className={`px-4 py-2 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all ${selectedPoses.includes(p.id) ? 'bg-cyan-500 border-cyan-500 text-white shadow-lg shadow-cyan-500/20' : 'bg-gray-950 border-gray-800 text-gray-500 hover:border-gray-600'}`}
+                      >
+                        {p.label}
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -353,20 +402,20 @@ const App: React.FC = () => {
                 <div className="space-y-3">
                   <button 
                     onClick={handleGenerate} 
-                    disabled={isLoading || garments.length === 0 || usage.count >= DAILY_LIMIT} 
+                    disabled={isLoading || garments.length === 0 || isOverLimit || willExceedLimit} 
                     className={`w-full font-black py-6 rounded-3xl shadow-2xl uppercase tracking-[0.3em] text-[11px] transition-all active:scale-[0.98] ${
-                      usage.count >= DAILY_LIMIT 
+                      (isOverLimit || willExceedLimit)
                       ? 'bg-gray-800 text-gray-600 cursor-not-allowed border border-gray-700/50' 
                       : 'bg-cyan-500 hover:bg-cyan-400 text-white shadow-cyan-500/10'
                     }`}
                   >
-                    {usage.count >= DAILY_LIMIT ? 'Daily Limit Reached' : 'Start Production'}
+                    {isOverLimit ? 'Daily Limit Reached' : willExceedLimit ? 'Insufficient Credits' : 'Start Production'}
                   </button>
                   <div className="flex justify-between items-center px-2">
                     <p className="text-[9px] text-gray-600 uppercase font-black tracking-widest">
-                      {Math.max(0, DAILY_LIMIT - usage.count)} / {DAILY_LIMIT} Shoots Available
+                      {Math.max(0, DAILY_LIMIT - usage.count)} / {DAILY_LIMIT} Credits Remaining
                     </p>
-                    <p className="text-[8px] text-gray-700 font-bold uppercase">24H Reset</p>
+                    <p className="text-[8px] text-gray-700 font-bold uppercase">Linked to {user.email}</p>
                   </div>
                 </div>
               </div>
