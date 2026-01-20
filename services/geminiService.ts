@@ -3,7 +3,7 @@ import { GarmentAnalysis, SceneId, PhotoshootImage } from "../types";
 import { SCENE_PRESETS } from "../constants";
 
 const TEXT_MODEL = "gemini-3-flash-preview";
-const IMAGE_MODEL = "gemini-3-pro-image-preview";
+const IMAGE_MODEL = "gemini-2.5-flash-image";
 
 const fileToGenerativePart = (base64Data: string, mimeType: string) => {
   const data = base64Data.includes(",") ? base64Data.split(",")[1] : base64Data;
@@ -20,7 +20,8 @@ const isRetryableError = (error: any): boolean => {
     msg.includes("503") ||
     msg.includes("overloaded") ||
     msg.includes("deadline") ||
-    msg.includes("resource exhausted")
+    msg.includes("resource exhausted") ||
+    msg.includes("service unavailable")
   );
 };
 
@@ -81,8 +82,8 @@ export const analyzeGarment = async (
 
     return JSON.parse(response.text || "{}");
   } catch (error: any) {
-    if (isRetryableError(error) && retryCount < 2) {
-      await delay(2000 * (retryCount + 1));
+    if (isRetryableError(error) && retryCount < 3) {
+      await delay(2000 * Math.pow(2, retryCount));
       return analyzeGarment(base64Image, retryCount + 1);
     }
     return handleGeminiError(error);
@@ -104,10 +105,11 @@ export const generatePhotoshoot = async (
   const results: PhotoshootImage[] = [];
 
   const baseSystemPrompt = `
-        High-end fashion shoot. Model: ${modelPrompt}. 
+        Commercial Fashion Photography. Model: ${modelPrompt}. 
         Setting: ${sceneDescription}. 
-        Item: ${analysis.style} ${analysis.garmentType}. 
-        Style: Photorealistic, cinematic lighting, 8k.
+        Product: ${analysis.style} ${analysis.garmentType} made of ${analysis.fabric}. 
+        Lighting: Editorial studio lighting, high contrast, clean shadows.
+        Quality: Photorealistic, 8k, sharp focus.
     `;
 
   let masterReferenceB64: string | null = null;
@@ -125,10 +127,11 @@ export const generatePhotoshoot = async (
         let promptText = "";
 
         if (i === 0 || !masterReferenceB64) {
-          promptText = `${baseSystemPrompt} Pose: ${poses[i]}. Sharp fabric detail.`;
+          promptText = `${baseSystemPrompt} Pose: ${poses[i]}. Focus on garment texture.`;
         } else {
+          // Use identity consistency by providing the first frame as reference
           parts.push(fileToGenerativePart(masterReferenceB64, "image/png"));
-          promptText = `${baseSystemPrompt} Pose: ${poses[i]}. Keep same model and background.`;
+          promptText = `${baseSystemPrompt} Pose: ${poses[i]}. Maintain the same model identity and background from the reference image.`;
         }
 
         parts.push({ text: promptText });
@@ -137,7 +140,7 @@ export const generatePhotoshoot = async (
           model: IMAGE_MODEL,
           contents: { parts },
           config: {
-            imageConfig: { aspectRatio: "3:4", imageSize: "1K" },
+            imageConfig: { aspectRatio: "3:4" },
           },
         });
 
@@ -153,13 +156,13 @@ export const generatePhotoshoot = async (
           if (i === 0) masterReferenceB64 = b64;
           success = true;
         } else {
-          throw new Error("No image data returned from API");
+          throw new Error("No image data returned from Gemini 2.5 Flash Image");
         }
       } catch (error: any) {
         if (isRetryableError(error)) {
           attempts++;
           if (attempts < maxAttempts) {
-            await delay(3000 * attempts);
+            await delay(2000 * attempts);
             continue;
           }
         }
@@ -182,11 +185,13 @@ export const editImage = async (
       contents: {
         parts: [
           fileToGenerativePart(base64Image, "image/jpeg"),
-          { text: `Edit: ${prompt}. Keep consistency.` },
+          {
+            text: `Refine this fashion photo: ${prompt}. Maintain consistency of the garment and model.`,
+          },
         ],
       },
       config: {
-        imageConfig: { aspectRatio: "3:4", imageSize: "1K" },
+        imageConfig: { aspectRatio: "3:4" },
       },
     });
     const part = response.candidates?.[0]?.content?.parts.find(
@@ -213,7 +218,7 @@ export const generateImage = async (
       model: IMAGE_MODEL,
       contents: prompt,
       config: {
-        imageConfig: { aspectRatio: "3:4", imageSize: "1K" },
+        imageConfig: { aspectRatio: "3:4" },
       },
     });
     const part = response.candidates?.[0]?.content?.parts.find(
