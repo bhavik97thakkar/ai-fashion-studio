@@ -147,9 +147,8 @@ const App: React.FC = () => {
   }, [garments]);
 
   const handleGenerate = async () => {
-    // Explicit limit check matching the Header UI
     if (usage.count >= DAILY_LIMIT) {
-      setError("Daily production limit reached. Credits refresh at midnight.");
+      setError("Daily production limit reached.");
       return;
     }
     if (garments.length === 0 || !garments[0].analysis) return;
@@ -166,20 +165,20 @@ const App: React.FC = () => {
         selectedSceneId,
         modelPrompt,
         poseDescriptions,
-        (idx, total) => setLoadingMessage(`Rendering Fashion Image ${idx} of ${total}...`)
+        (idx, total) => setLoadingMessage(`Crafting Model Shot ${idx} of ${total}...`)
       );
 
       if (images.length > 0) {
         setGeneratedImages(images);
         
-        // Atomic update for usage count
+        // Update Usage
         setUsage(prev => ({ ...prev, count: prev.count + 1 }));
         
-        // Save the generated result (not the input garment) to history
+        // Save the FINAL generated images to history, not the input garment
         const newHistoryEntry: HistoryEntry = {
           id: Date.now().toString(),
           timestamp: new Date().toISOString(),
-          garmentPreview: images[0].src, // Use the FINAL image as the history preview
+          garmentPreview: images[0].src, // The thumbnail is now the final result
           images: images,
           details: modelPrompt
         };
@@ -192,7 +191,7 @@ const App: React.FC = () => {
         setHasKey(false);
         setError("Please re-select your API key.");
       } else {
-        setError("Shoot failed. Please check your connection.");
+        setError("Generation failed. Check billing or prompt.");
       }
     } finally {
       setIsLoading(false);
@@ -269,23 +268,23 @@ const App: React.FC = () => {
                   </div>
                 )}
 
-                {/* SUCCESSFUL PRODUCTION HISTORY */}
+                {/* FINAL OUTPUT HISTORY */}
                 {history.length > 0 && (
                   <div className="pt-8 space-y-4">
                     <div className="flex justify-between items-center">
-                      <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Successful Productions</h3>
+                      <h3 className="text-[11px] font-black text-gray-500 uppercase tracking-[0.2em]">History</h3>
                     </div>
-                    <div className="flex gap-4 overflow-x-auto pb-6 scrollbar-hide snap-x">
+                    <div className="flex gap-5 overflow-x-auto pb-6 scrollbar-hide snap-x">
                       {history.map(entry => (
                         <button 
                           key={entry.id} 
                           onClick={() => loadFromHistory(entry)}
-                          className="flex-shrink-0 w-28 group relative snap-start"
+                          className="flex-shrink-0 w-32 group relative snap-start"
                         >
-                          <div className="aspect-[3/4] rounded-2xl overflow-hidden border border-gray-800 group-hover:border-cyan-500/50 transition-all shadow-xl bg-gray-900">
+                          <div className="aspect-[3/4] rounded-[1.5rem] overflow-hidden border border-gray-800 group-hover:border-cyan-500/50 transition-all shadow-2xl bg-gray-900">
                             <img src={entry.garmentPreview} className="w-full h-full object-cover" />
-                            <div className="absolute inset-0 bg-cyan-500/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                               <span className="bg-black/80 px-2 py-1 rounded text-[8px] font-black uppercase">Recall</span>
+                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                               <span className="text-[8px] font-black uppercase bg-cyan-500 text-white px-3 py-1 rounded-full shadow-lg">Load Result</span>
                             </div>
                           </div>
                         </button>
@@ -306,7 +305,7 @@ const App: React.FC = () => {
                 />
                 
                 <div className="space-y-6">
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Pose Architecture</h3>
+                  <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Pose Structure</h3>
                   <div className="flex flex-wrap gap-2">
                     {POSES.map(p => (
                       <button key={p.id} onClick={() => setSelectedPoses(prev => prev.includes(p.id) ? (prev.length > 1 ? prev.filter(i => i !== p.id) : prev) : [...prev, p.id])} className={`px-4 py-2 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all ${selectedPoses.includes(p.id) ? 'bg-cyan-500 border-cyan-500 text-white shadow-lg shadow-cyan-500/20' : 'bg-gray-950 border-gray-800 text-gray-500 hover:border-gray-600'}`}>{p.label}</button>
@@ -315,7 +314,7 @@ const App: React.FC = () => {
                 </div>
 
                 <div className="space-y-6">
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Environment</h3>
+                  <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Atmosphere</h3>
                   <SceneSelector selectedSceneId={selectedSceneId} onSelectScene={setSelectedSceneId} customBackgroundImage={null} onCustomBackgroundChange={() => {}} />
                 </div>
 
@@ -333,9 +332,9 @@ const App: React.FC = () => {
                   </button>
                   <div className="flex justify-between items-center px-2">
                     <p className="text-[9px] text-gray-600 uppercase font-black tracking-widest">
-                      {Math.max(0, DAILY_LIMIT - usage.count)} / {DAILY_LIMIT} Shoots Remaining
+                      {Math.max(0, DAILY_LIMIT - usage.count)} / {DAILY_LIMIT} Shoots Available
                     </p>
-                    <p className="text-[8px] text-gray-700 font-bold uppercase">Daily Cycle</p>
+                    <p className="text-[8px] text-gray-700 font-bold uppercase">24H Reset</p>
                   </div>
                 </div>
               </div>
@@ -343,7 +342,7 @@ const App: React.FC = () => {
 
             {generatedImages.length > 0 && (
               <div id="production-output" className="pt-12 border-t border-gray-800 scroll-mt-24">
-                <h2 className="text-3xl font-black uppercase tracking-tighter mb-8 text-center">Output</h2>
+                <h2 className="text-3xl font-black uppercase tracking-tighter mb-8 text-center">Final Renders</h2>
                 <PhotoshootGallery images={generatedImages} onEditRequest={setEditingImage} isPro={true} />
               </div>
             )}
