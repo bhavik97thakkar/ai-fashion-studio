@@ -16,6 +16,7 @@ import ModelOptions from './components/ModelOptions';
 
 const GOOGLE_CLIENT_ID = "309212162577-8tjqu29ece6h0dv9q0bh5h8h80ki0mgn.apps.googleusercontent.com";
 const DAILY_LIMIT = 5;
+const MAX_HISTORY_ITEMS = 10; // Reduced to manage storage quota
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(() => {
@@ -25,7 +26,6 @@ const App: React.FC = () => {
   
   const [hasKey, setHasKey] = useState(false);
   
-  // Persistent Usage Logic - Resets based on date string
   const [usage, setUsage] = useState<UsageLimit>(() => {
     const saved = localStorage.getItem('usage_limit');
     const now = new Date();
@@ -33,7 +33,6 @@ const App: React.FC = () => {
       try {
         const parsed = JSON.parse(saved);
         const lastDate = new Date(parsed.lastReset).toDateString();
-        // Reset if it's a new calendar day
         if (now.toDateString() !== lastDate) {
           return { count: 0, lastReset: now.toISOString() };
         }
@@ -45,10 +44,14 @@ const App: React.FC = () => {
     return { count: 0, lastReset: now.toISOString() };
   });
 
-  // Persistent History Logic - Stores final generated images
   const [history, setHistory] = useState<HistoryEntry[]>(() => {
     const saved = localStorage.getItem('photoshoot_history');
-    return saved ? JSON.parse(saved) : [];
+    if (!saved) return [];
+    try {
+      return JSON.parse(saved);
+    } catch {
+      return [];
+    }
   });
 
   const [garments, setGarments] = useState<UploadedGarment[]>([]);
@@ -67,13 +70,39 @@ const App: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Sync state to localStorage
+  // Robust persistence with quota handling
+  const safeSaveHistory = (items: HistoryEntry[]) => {
+    let currentItems = [...items];
+    while (currentItems.length > 0) {
+      try {
+        const serialized = JSON.stringify(currentItems);
+        localStorage.setItem('photoshoot_history', serialized);
+        break; // Success
+      } catch (e) {
+        if (e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED')) {
+          // Remove the oldest item and try again
+          currentItems.pop();
+          if (currentItems.length === 0) {
+            localStorage.removeItem('photoshoot_history');
+            break;
+          }
+        } else {
+          throw e;
+        }
+      }
+    }
+    return currentItems;
+  };
+
   useEffect(() => {
     localStorage.setItem('usage_limit', JSON.stringify(usage));
   }, [usage]);
 
   useEffect(() => {
-    localStorage.setItem('photoshoot_history', JSON.stringify(history));
+    const prunedHistory = safeSaveHistory(history);
+    if (prunedHistory.length !== history.length) {
+      setHistory(prunedHistory);
+    }
   }, [history]);
 
   useEffect(() => {
@@ -89,7 +118,13 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (user) localStorage.setItem('auth_user', JSON.stringify(user));
+    if (user) {
+      try {
+        localStorage.setItem('auth_user', JSON.stringify(user));
+      } catch (e) {
+        console.warn("Could not save user session to localStorage");
+      }
+    }
   }, [user]);
 
   useEffect(() => {
@@ -170,20 +205,18 @@ const App: React.FC = () => {
 
       if (images.length > 0) {
         setGeneratedImages(images);
-        
-        // Update Usage
         setUsage(prev => ({ ...prev, count: prev.count + 1 }));
         
-        // Save the FINAL generated images to history, not the input garment
+        // Save the result to history
         const newHistoryEntry: HistoryEntry = {
           id: Date.now().toString(),
           timestamp: new Date().toISOString(),
-          garmentPreview: images[0].src, // The thumbnail is now the final result
+          garmentPreview: images[0].src, 
           images: images,
           details: modelPrompt
         };
         
-        setHistory(prev => [newHistoryEntry, ...prev].slice(0, 30));
+        setHistory(prev => [newHistoryEntry, ...prev].slice(0, MAX_HISTORY_ITEMS));
       }
 
     } catch (e: any) {
@@ -268,7 +301,6 @@ const App: React.FC = () => {
                   </div>
                 )}
 
-                {/* FINAL OUTPUT HISTORY */}
                 {history.length > 0 && (
                   <div className="pt-8 space-y-4">
                     <div className="flex justify-between items-center">
