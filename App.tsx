@@ -28,7 +28,7 @@ const App: React.FC = () => {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
 
   const syncAllUserData = useCallback(async (email: string) => {
-    // 1. Fetch from Cloud first
+    // 1. Fetch from Cloud first (Source of Truth)
     const cloudUsage = await cloudDB.syncUsageFromCloud(email);
     const usageKey = `usage_limit_${email}`;
     const historyKey = `history_${email}`;
@@ -36,11 +36,12 @@ const App: React.FC = () => {
     
     let currentUsage: UsageLimit;
 
-    if (cloudUsage) {
+    if (cloudUsage && cloudUsage.count !== undefined) {
       // Data exists in DB, use it
       currentUsage = { count: cloudUsage.count, lastReset: cloudUsage.last_reset };
     } else {
-      // DATA DELETED IN DB OR NEW USER: Reset local storage to 0
+      // CRITICAL FIX: If DB is empty/deleted, FORCE reset everything local
+      console.log(`[Sync] No cloud record for ${email}. Resetting local usage.`);
       currentUsage = { count: 0, lastReset: now.toISOString() };
       localStorage.removeItem(usageKey); 
     }
@@ -154,7 +155,7 @@ const App: React.FC = () => {
     const currentRemaining = DAILY_LIMIT - usage.count;
     
     if (currentRemaining < totalPosesToGenerate) {
-      setError(`Insufficient credits. You need ${totalPosesToGenerate} tokens, but have ${currentRemaining} remaining.`);
+      setError(`Insufficient credits. Session requires ${totalPosesToGenerate}, but you only have ${currentRemaining} left.`);
       return;
     }
 
