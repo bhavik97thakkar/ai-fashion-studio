@@ -37,7 +37,7 @@ export const analyzeGarment = async (
       contents: {
         parts: [
           {
-            text: "Analyze this garment and return JSON: {garmentType, fabric, colorPalette:[], style, gender:'Male'|'Female'|'Unisex', uniquenessLevel:'Unique'|'Common'}",
+            text: "Analyze garment for photoshoot. JSON: {garmentType, fabric, colorPalette:[], style, gender:'Male'|'Female'|'Unisex', uniquenessLevel:'Unique'|'Common'}",
           },
           imagePart,
         ],
@@ -83,15 +83,16 @@ export const generatePhotoshoot = async (
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
   const sceneDescription =
     SCENE_PRESETS.find((s) => s.id === sceneId)?.description ||
-    "Professional Studio";
+    "Professional fashion studio background";
   const results: PhotoshootImage[] = [];
 
+  // Concise, high-impact instructions for faster generation
   const baseSystemPrompt = `
-        HIGH-END FASHION. 
-        Model: ${modelPrompt}. 
-        Set: ${sceneDescription}. 
-        Product: ${analysis.style} ${analysis.garmentType} (${analysis.colorPalette.join(", ")}).
-        Style: Photorealistic, magazine quality.
+        Professional high-end fashion photography. 
+        Subject: ${modelPrompt}. 
+        Setting: ${sceneDescription}. 
+        Apparel: The specific ${analysis.style} ${analysis.garmentType} provided in reference.
+        Style: Commercial, 8k resolution, photorealistic, cinematic lighting.
     `;
 
   let masterReferenceB64: string | null = null;
@@ -105,10 +106,11 @@ export const generatePhotoshoot = async (
       let promptText = "";
 
       if (i === 0) {
-        promptText = `${baseSystemPrompt} Pose: ${poses[i]}. Focus on high-quality model features.`;
+        promptText = `${baseSystemPrompt} Pose: ${poses[i]}. Keep garment details sharp and accurate.`;
       } else if (masterReferenceB64) {
+        // Pass previous result to maintain character/background consistency
         parts.push(fileToGenerativePart(masterReferenceB64, "image/png"));
-        promptText = `${baseSystemPrompt} Pose: ${poses[i]}. CLONE MODEL FACE AND BACKGROUND EXACTLY from reference.`;
+        promptText = `${baseSystemPrompt} Pose: ${poses[i]}. MAINTAIN SAME MODEL FACE AND LIGHTING as the reference.`;
       }
 
       parts.push({ text: promptText });
@@ -134,6 +136,7 @@ export const generatePhotoshoot = async (
           src: `data:image/png;base64,${b64}`,
         });
 
+        // Track first result for consistency across poses
         if (i === 0) masterReferenceB64 = b64;
       }
     } catch (error: any) {
@@ -154,8 +157,13 @@ export const editImage = async (
       contents: {
         parts: [
           fileToGenerativePart(base64Image, "image/jpeg"),
-          { text: `Refine: ${prompt}. Maintain model identity.` },
+          {
+            text: `Apply fashion edit: ${prompt}. Keep model identity and background identical.`,
+          },
         ],
+      },
+      config: {
+        imageConfig: { aspectRatio: "3:4", imageSize: "1K" },
       },
     });
     const part = response.candidates?.[0]?.content?.parts.find(
@@ -174,6 +182,9 @@ export const generateImage = async (prompt: string): Promise<string> => {
     const response = await ai.models.generateContent({
       model: IMAGE_MODEL,
       contents: prompt,
+      config: {
+        imageConfig: { aspectRatio: "3:4", imageSize: "1K" },
+      },
     });
     const part = response.candidates?.[0]?.content?.parts.find(
       (p) => p.inlineData,
