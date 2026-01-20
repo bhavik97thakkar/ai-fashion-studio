@@ -28,33 +28,36 @@ const App: React.FC = () => {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
 
   const syncAllUserData = useCallback(async (email: string) => {
+    // 1. Fetch from Cloud first
     const cloudUsage = await cloudDB.syncUsageFromCloud(email);
     const usageKey = `usage_limit_${email}`;
     const historyKey = `history_${email}`;
-    const savedUsage = localStorage.getItem(usageKey);
-    const savedHistory = localStorage.getItem(historyKey);
     const now = new Date();
     
     let currentUsage: UsageLimit;
 
     if (cloudUsage) {
+      // Data exists in DB, use it
       currentUsage = { count: cloudUsage.count, lastReset: cloudUsage.last_reset };
-    } else if (savedUsage) {
-      currentUsage = JSON.parse(savedUsage);
     } else {
+      // DATA DELETED IN DB OR NEW USER: Reset local storage to 0
       currentUsage = { count: 0, lastReset: now.toISOString() };
+      localStorage.removeItem(usageKey); 
     }
 
-    // Reset logic: If date has changed, reset count to 0
+    // 2. Daily Reset Check (if user hasn't been deleted but it's a new day)
     const lastDate = new Date(currentUsage.lastReset).toDateString();
     if (now.toDateString() !== lastDate) {
       currentUsage = { count: 0, lastReset: now.toISOString() };
       cloudDB.updateUsageInCloud(email, 0, now.toISOString());
     }
     
+    // 3. Update State and Sync Local
     setUsage(currentUsage);
     localStorage.setItem(usageKey, JSON.stringify(currentUsage));
 
+    // 4. Sync History
+    const savedHistory = localStorage.getItem(historyKey);
     if (savedHistory) {
       try { 
         const parsed = JSON.parse(savedHistory);
@@ -151,7 +154,7 @@ const App: React.FC = () => {
     const currentRemaining = DAILY_LIMIT - usage.count;
     
     if (currentRemaining < totalPosesToGenerate) {
-      setError(`Insufficient credits. Session requires ${totalPosesToGenerate} tokens. You have ${currentRemaining} remaining. Please reduce garments or poses.`);
+      setError(`Insufficient credits. You need ${totalPosesToGenerate} tokens, but have ${currentRemaining} remaining.`);
       return;
     }
 
