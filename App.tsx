@@ -24,21 +24,23 @@ const App: React.FC = () => {
   });
   
   const [hasKey, setHasKey] = useState(false);
+  
+  // Persistent Usage Logic - Resets based on date string
   const [usage, setUsage] = useState<UsageLimit>(() => {
     const saved = localStorage.getItem('usage_limit');
+    const now = new Date();
     if (saved) {
       const parsed = JSON.parse(saved);
-      const lastReset = new Date(parsed.lastReset);
-      const now = new Date();
-      // Reset if it's a new day
-      if (now.toDateString() !== lastReset.toDateString()) {
+      const lastDate = new Date(parsed.lastReset).toDateString();
+      if (now.toDateString() !== lastDate) {
         return { count: 0, lastReset: now.toISOString() };
       }
       return parsed;
     }
-    return { count: 0, lastReset: new Date().toISOString() };
+    return { count: 0, lastReset: now.toISOString() };
   });
 
+  // Persistent History Logic
   const [history, setHistory] = useState<HistoryEntry[]>(() => {
     const saved = localStorage.getItem('photoshoot_history');
     return saved ? JSON.parse(saved) : [];
@@ -60,6 +62,7 @@ const App: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Sync state to localStorage
   useEffect(() => {
     localStorage.setItem('usage_limit', JSON.stringify(usage));
   }, [usage]);
@@ -95,7 +98,7 @@ const App: React.FC = () => {
     if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
       try {
         await window.aistudio.openSelectKey();
-        setHasKey(true);
+        setHasKey(true); // Optimistic proceed
       } catch (err) {
         setError("Could not open API Key selector.");
       }
@@ -140,7 +143,7 @@ const App: React.FC = () => {
 
   const handleGenerate = async () => {
     if (usage.count >= DAILY_LIMIT) {
-      setError("Daily limit reached. Come back tomorrow!");
+      setError("Your daily limit of 5 shoots is reached. Resets at midnight.");
       return;
     }
     if (garments.length === 0 || !garments[0].analysis) return;
@@ -157,13 +160,14 @@ const App: React.FC = () => {
         selectedSceneId,
         modelPrompt,
         poseDescriptions,
-        (idx, total) => setLoadingMessage(`Processing Frame ${idx} of ${total}...`)
+        (idx, total) => setLoadingMessage(`Crafting Model Shot ${idx} of ${total}...`)
       );
 
       setGeneratedImages(images);
       
       // Update Usage and History
       setUsage(prev => ({ ...prev, count: prev.count + 1 }));
+      
       const newHistoryEntry: HistoryEntry = {
         id: Date.now().toString(),
         timestamp: new Date().toISOString(),
@@ -171,14 +175,15 @@ const App: React.FC = () => {
         images: images,
         details: modelPrompt
       };
-      setHistory(prev => [newHistoryEntry, ...prev].slice(0, 20)); // Keep last 20
+      
+      setHistory(prev => [newHistoryEntry, ...prev].slice(0, 30));
 
     } catch (e: any) {
       if (e.message === "RESELECT_KEY") {
         setHasKey(false);
-        setError("Please re-select your API key.");
+        setError("Please re-select your API key from a paid project.");
       } else {
-        setError("Photoshoot failed.");
+        setError("Generation failed. Check your billing or prompt.");
       }
     } finally {
       setIsLoading(false);
@@ -187,13 +192,18 @@ const App: React.FC = () => {
 
   const loadFromHistory = (entry: HistoryEntry) => {
     setGeneratedImages(entry.images);
-    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    // Smooth scroll to results
+    const resultsSection = document.getElementById('production-output');
+    if (resultsSection) {
+      resultsSection.scrollIntoView({ behavior: 'smooth' });
+    }
   };
 
   if (!hasKey) {
     return (
       <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-center p-6 text-center">
         <h2 className="text-5xl font-black text-white mb-6 tracking-tighter uppercase">Activate <span className="text-cyan-500">PRO</span></h2>
+        <p className="text-gray-400 max-w-md mb-8 leading-relaxed">Select a paid API key to access high-resolution model generation.</p>
         <button onClick={handleSelectKey} className="bg-cyan-500 hover:bg-cyan-400 text-white font-black py-4 px-10 rounded-2xl shadow-2xl uppercase tracking-widest text-xs transition-all">Select API Key</button>
       </div>
     );
@@ -211,8 +221,9 @@ const App: React.FC = () => {
       
       <main className="container mx-auto px-4 py-12 max-w-6xl">
         {isLoading && <Loader message={loadingMessage} />}
+        
         {error && (
-          <div className="mb-8 bg-red-900/20 border border-red-500/30 p-4 rounded-2xl text-red-400 text-xs flex justify-between items-center">
+          <div className="mb-8 bg-red-900/20 border border-red-500/30 p-4 rounded-2xl text-red-400 text-xs flex justify-between items-center animate-pulse">
             <span className="font-bold">{error}</span>
             <button onClick={() => setError(null)} className="font-black uppercase text-[10px] bg-red-500/20 px-3 py-1 rounded-lg">Dismiss</button>
           </div>
@@ -221,6 +232,7 @@ const App: React.FC = () => {
         {!user ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <h2 className="text-7xl font-black text-white mb-4 tracking-tighter uppercase italic">STUDIO<span className="text-cyan-500">PRO</span></h2>
+            <p className="text-gray-500 text-[11px] font-black uppercase tracking-[0.4em] mb-12">Next-Gen Fashion Production</p>
             <div id="google-signin-container" className="scale-110" />
           </div>
         ) : (
@@ -229,7 +241,7 @@ const App: React.FC = () => {
               <div className="space-y-8">
                 <div className="flex justify-between items-end border-b border-gray-800 pb-4">
                   <h2 className="text-4xl font-black uppercase tracking-tighter">Moodboard</h2>
-                  <button onClick={() => fileInputRef.current?.click()} className="text-[10px] font-black uppercase text-cyan-500">+ Upload</button>
+                  <button onClick={() => fileInputRef.current?.click()} className="text-[10px] font-black uppercase text-cyan-500 hover:text-cyan-400 transition-colors">+ Add Garment</button>
                   <input type="file" ref={fileInputRef} onChange={(e) => e.target.files && handleImageUpload(Array.from(e.target.files))} className="hidden" accept="image/*" />
                 </div>
                 
@@ -239,27 +251,37 @@ const App: React.FC = () => {
                   <div className="grid grid-cols-2 gap-4">
                     {garments.map(g => (
                       <div key={g.id} className="relative aspect-[3/4] rounded-3xl overflow-hidden border border-gray-800 group bg-black shadow-xl">
-                        <img src={g.preview} className="w-full h-full object-cover" />
-                        <button onClick={() => setGarments([])} className="absolute top-4 right-4 bg-black/50 text-white w-8 h-8 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">×</button>
+                        <img src={g.preview} className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-700" />
+                        {g.isLoading && (
+                          <div className="absolute inset-0 bg-black/60 flex items-center justify-center backdrop-blur-sm">
+                            <div className="w-6 h-6 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
+                          </div>
+                        )}
+                        <button onClick={() => setGarments([])} className="absolute top-4 right-4 bg-black/50 text-white w-8 h-8 flex items-center justify-center rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500">×</button>
                       </div>
                     ))}
                   </div>
                 )}
 
-                {/* History Section */}
+                {/* Production History Carousel */}
                 {history.length > 0 && (
                   <div className="pt-8 space-y-4">
-                    <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Recent Shoots</h3>
-                    <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
+                    <div className="flex justify-between items-center">
+                      <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Recent Productions</h3>
+                      <span className="text-[9px] text-gray-700 font-bold">{history.length} Saved</span>
+                    </div>
+                    <div className="flex gap-4 overflow-x-auto pb-6 scrollbar-hide snap-x">
                       {history.map(entry => (
                         <button 
                           key={entry.id} 
                           onClick={() => loadFromHistory(entry)}
-                          className="flex-shrink-0 w-24 group relative"
+                          className="flex-shrink-0 w-24 group relative snap-start"
                         >
-                          <img src={entry.garmentPreview} className="w-full aspect-[3/4] object-cover rounded-xl border border-gray-800 group-hover:border-cyan-500 transition-colors" />
-                          <div className="absolute inset-0 bg-cyan-500/20 opacity-0 group-hover:opacity-100 rounded-xl transition-opacity flex items-center justify-center">
-                            <span className="text-[8px] font-black uppercase bg-black/80 px-2 py-1 rounded">View</span>
+                          <div className="aspect-[3/4] rounded-xl overflow-hidden border border-gray-800 group-hover:border-cyan-500/50 transition-all shadow-lg">
+                            <img src={entry.garmentPreview} className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-500" />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
+                               <span className="text-[7px] font-black uppercase text-white truncate w-full">{new Date(entry.timestamp).toLocaleDateString()}</span>
+                            </div>
                           </div>
                         </button>
                       ))}
@@ -279,7 +301,7 @@ const App: React.FC = () => {
                 />
                 
                 <div className="space-y-6">
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Architecture</h3>
+                  <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Pose Architecture</h3>
                   <div className="flex flex-wrap gap-2">
                     {POSES.map(p => (
                       <button key={p.id} onClick={() => setSelectedPoses(prev => prev.includes(p.id) ? (prev.length > 1 ? prev.filter(i => i !== p.id) : prev) : [...prev, p.id])} className={`px-4 py-2 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all ${selectedPoses.includes(p.id) ? 'bg-cyan-500 border-cyan-500 text-white shadow-lg shadow-cyan-500/20' : 'bg-gray-950 border-gray-800 text-gray-500 hover:border-gray-600'}`}>{p.label}</button>
@@ -288,28 +310,35 @@ const App: React.FC = () => {
                 </div>
 
                 <div className="space-y-6">
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Environment</h3>
+                  <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Atmosphere</h3>
                   <SceneSelector selectedSceneId={selectedSceneId} onSelectScene={setSelectedSceneId} customBackgroundImage={null} onCustomBackgroundChange={() => {}} />
                 </div>
 
-                <div className="space-y-2">
-                   <button 
+                <div className="space-y-3">
+                  <button 
                     onClick={handleGenerate} 
                     disabled={isLoading || garments.length === 0 || usage.count >= DAILY_LIMIT} 
-                    className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:bg-gray-800 text-white font-black py-6 rounded-3xl shadow-2xl shadow-cyan-500/10 uppercase tracking-[0.3em] text-[11px] transition-all active:scale-[0.98]"
+                    className={`w-full font-black py-6 rounded-3xl shadow-2xl uppercase tracking-[0.3em] text-[11px] transition-all active:scale-[0.98] ${
+                      usage.count >= DAILY_LIMIT 
+                      ? 'bg-gray-800 text-gray-500 cursor-not-allowed border border-gray-700' 
+                      : 'bg-cyan-500 hover:bg-cyan-400 text-white shadow-cyan-500/10'
+                    }`}
                   >
-                    {usage.count >= DAILY_LIMIT ? 'Daily Limit Reached' : 'Start Production'}
+                    {usage.count >= DAILY_LIMIT ? 'Daily Limit Exhausted' : 'Start Production'}
                   </button>
-                  <p className="text-center text-[9px] text-gray-600 uppercase font-black tracking-widest">
-                    {DAILY_LIMIT - usage.count} Credits Remaining for today
-                  </p>
+                  <div className="flex justify-between items-center px-2">
+                    <p className="text-[9px] text-gray-600 uppercase font-black tracking-widest">
+                      {DAILY_LIMIT - usage.count} Credits Remaining
+                    </p>
+                    <p className="text-[8px] text-gray-700 font-bold">Reset at Midnight</p>
+                  </div>
                 </div>
               </div>
             </div>
 
             {generatedImages.length > 0 && (
-              <div className="pt-12 border-t border-gray-800">
-                <h2 className="text-3xl font-black uppercase tracking-tighter mb-8 text-center">Output</h2>
+              <div id="production-output" className="pt-12 border-t border-gray-800 scroll-mt-24">
+                <h2 className="text-3xl font-black uppercase tracking-tighter mb-8 text-center">Final Renders</h2>
                 <PhotoshootGallery images={generatedImages} onEditRequest={setEditingImage} isPro={true} />
               </div>
             )}
@@ -329,7 +358,7 @@ const App: React.FC = () => {
               setGeneratedImages(prev => prev.map(img => img.id === editingImage.id ? { ...img, src } : img));
               setEditingImage(null);
             } catch (e) {
-              setError("Edit failed.");
+              setError("Refinement failed. Try a simpler description.");
             } finally {
               setIsLoading(false);
             }
