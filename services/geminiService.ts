@@ -18,6 +18,7 @@ export const analyzeGarment = async (
   base64Image: string,
 ): Promise<GarmentAnalysis> => {
   try {
+    // ALWAYS create instance right before call to use latest key
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
     const imagePart = fileToGenerativePart(base64Image, "image/jpeg");
 
@@ -57,11 +58,10 @@ export const analyzeGarment = async (
 
     return JSON.parse(response.text || "{}");
   } catch (error: any) {
-    // Handle the specific NOT_FOUND or Billing errors
+    // Handle NOT_FOUND (404) or Requested entity not found which signals bad key or no billing
     if (
-      error.message?.includes("not found") ||
-      error.message?.includes("404") ||
-      error.message?.includes("billing")
+      error.message?.toLowerCase().includes("not found") ||
+      error.message?.includes("404")
     ) {
       throw new Error("RESELECT_KEY");
     }
@@ -77,6 +77,7 @@ export const generatePhotoshoot = async (
   poses: string[],
   onProgress: (index: number, total: number) => void,
 ): Promise<PhotoshootImage[]> => {
+  // Create new instance to capture updated API_KEY
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
   const scene =
     SCENE_PRESETS.find((s) => s.id === sceneId)?.description || "Studio";
@@ -115,7 +116,7 @@ export const generatePhotoshoot = async (
       }
     } catch (error: any) {
       if (
-        error.message?.includes("not found") ||
+        error.message?.toLowerCase().includes("not found") ||
         error.message?.includes("404")
       )
         throw new Error("RESELECT_KEY");
