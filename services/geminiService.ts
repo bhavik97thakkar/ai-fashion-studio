@@ -2,6 +2,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { GarmentAnalysis, SceneId, PhotoshootImage } from "../types";
 import { SCENE_PRESETS } from "../constants";
 
+// Strictly using the faster and more available 2.5 series model
 const TEXT_MODEL = "gemini-3-flash-preview";
 const IMAGE_MODEL = "gemini-2.5-flash-image";
 
@@ -98,7 +99,6 @@ export const generatePhotoshoot = async (
   poses: string[],
   onProgress: (index: number, total: number, isRetrying?: boolean) => void,
 ): Promise<PhotoshootImage[]> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
   const sceneDescription =
     SCENE_PRESETS.find((s) => s.id === sceneId)?.description ||
     "Professional fashion studio background";
@@ -123,13 +123,14 @@ export const generatePhotoshoot = async (
       onProgress(i + 1, poses.length, attempts > 0);
 
       try {
+        // Initialize fresh instance per attempt to ensure correct model is used
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
         const parts: any[] = [fileToGenerativePart(garmentImage, "image/jpeg")];
         let promptText = "";
 
         if (i === 0 || !masterReferenceB64) {
           promptText = `${baseSystemPrompt} Pose: ${poses[i]}. Focus on garment texture.`;
         } else {
-          // Use identity consistency by providing the first frame as reference
           parts.push(fileToGenerativePart(masterReferenceB64, "image/png"));
           promptText = `${baseSystemPrompt} Pose: ${poses[i]}. Maintain the same model identity and background from the reference image.`;
         }
@@ -156,7 +157,7 @@ export const generatePhotoshoot = async (
           if (i === 0) masterReferenceB64 = b64;
           success = true;
         } else {
-          throw new Error("No image data returned from Gemini 2.5 Flash Image");
+          throw new Error("No image data returned");
         }
       } catch (error: any) {
         if (isRetryableError(error)) {
