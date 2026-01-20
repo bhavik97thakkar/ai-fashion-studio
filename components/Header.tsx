@@ -1,6 +1,6 @@
-
 import React from 'react';
 import { User, UsageLimit } from '../types';
+import { DAILY_LIMIT } from '../App';
 
 interface HeaderProps {
   user: User | null;
@@ -11,7 +11,6 @@ interface HeaderProps {
 }
 
 const Header: React.FC<HeaderProps> = ({ user, usage, onSignOut }) => {
-  const DAILY_LIMIT = 5;
   const percentage = Math.min(100, (usage.count / DAILY_LIMIT) * 100);
 
   return (
@@ -33,10 +32,10 @@ const Header: React.FC<HeaderProps> = ({ user, usage, onSignOut }) => {
             <>
               <div className="flex items-center gap-4">
                  <div className="hidden sm:flex flex-col items-end">
-                  <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">DAILY LIMIT</span>
+                  <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">DAILY CREDIT</span>
                   <span className="text-sm font-bold text-white leading-none mt-1">{usage.count}/{DAILY_LIMIT}</span>
                 </div>
-                <div className="w-20 h-2 bg-gray-800 rounded-full overflow-hidden border border-gray-700/50">
+                <div className="w-24 h-2 bg-gray-800 rounded-full overflow-hidden border border-gray-700/50">
                   <div 
                     className={`h-full transition-all duration-700 ${usage.count >= DAILY_LIMIT ? 'bg-red-500' : 'bg-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.4)]'}`}
                     style={{ width: `${percentage}%` }}

@@ -15,7 +15,7 @@ import Loader from './components/Loader';
 import ModelOptions from './components/ModelOptions';
 
 const GOOGLE_CLIENT_ID = "309212162577-8tjqu29ece6h0dv9q0bh5h8h80ki0mgn.apps.googleusercontent.com";
-const DAILY_LIMIT = 20;
+export const DAILY_LIMIT = 50; // Increased to 50 to support professional multi-garment sessions
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(() => {
@@ -123,10 +123,8 @@ const App: React.FC = () => {
       }))
     );
     
-    // Use functional update to ensure we don't overwrite previous uploads
     setGarments(prev => [...prev, ...newGarments]);
 
-    // Process analysis for each new garment individually
     newGarments.forEach(async (g) => {
       try {
         const analysis = await geminiService.analyzeGarment(g.preview);
@@ -148,11 +146,11 @@ const App: React.FC = () => {
       return;
     }
 
-    const totalPosesNeeded = garments.length * selectedPoses.length;
-    const remaining = DAILY_LIMIT - usage.count;
+    const totalPosesToGenerate = garments.length * selectedPoses.length;
+    const currentRemaining = DAILY_LIMIT - usage.count;
     
-    if (remaining < totalPosesNeeded) {
-      setError(`Insufficient credits. You need ${totalPosesNeeded} but only have ${remaining} left.`);
+    if (currentRemaining < totalPosesToGenerate) {
+      setError(`Insufficient credits. Session requires ${totalPosesToGenerate} tokens. You have ${currentRemaining} remaining.`);
       return;
     }
 
@@ -175,8 +173,8 @@ const App: React.FC = () => {
           modelPrompt,
           poseDescriptions,
           (idx, total, isRetrying) => {
-            const baseMsg = `Producing Item ${i + 1}/${garments.length} | Frame ${idx}/${total}`;
-            setLoadingMessage(isRetrying ? `Server busy. Retrying Frame ${idx}/${total}...` : baseMsg);
+            const baseMsg = `PRODUCING COLLECTION: ITEM ${i + 1}/${garments.length} | FRAME ${idx}/${total}`;
+            setLoadingMessage(isRetrying ? `SERVER OVERLOADED. RETRYING FRAME ${idx}/${total}...` : baseMsg);
           }
         );
         allSessionImages = [...allSessionImages, ...garmentImages];
@@ -184,11 +182,11 @@ const App: React.FC = () => {
 
       if (allSessionImages.length > 0) {
         setGeneratedImages(allSessionImages);
-        const newCount = usage.count + allSessionImages.length;
-        const newUsage = { ...usage, count: newCount };
+        const newTotalUsed = usage.count + allSessionImages.length;
+        const newUsage = { ...usage, count: newTotalUsed };
         setUsage(newUsage);
         localStorage.setItem(`usage_limit_${user.email}`, JSON.stringify(newUsage));
-        await cloudDB.updateUsageInCloud(user.email, newCount, usage.lastReset);
+        await cloudDB.updateUsageInCloud(user.email, newTotalUsed, usage.lastReset);
         
         const newEntry: HistoryEntry = {
           id: Date.now().toString(),
@@ -210,7 +208,7 @@ const App: React.FC = () => {
         setError("Production session expired. Please re-select your API key.");
         window.aistudio?.openSelectKey();
       } else {
-        setError("Production was interrupted. Please check your connection and try again.");
+        setError("Production was interrupted. Credits were not deducted.");
       }
     } finally {
       setIsLoading(false);
@@ -222,7 +220,7 @@ const App: React.FC = () => {
       if (prev.includes(poseId)) {
         return prev.length > 1 ? prev.filter(i => i !== poseId) : prev;
       } else {
-        if (prev.length >= 5) return prev;
+        if (prev.length >= 6) return prev;
         return [...prev, poseId];
       }
     });
@@ -345,7 +343,7 @@ const App: React.FC = () => {
                 <div className="space-y-6">
                   <div className="flex justify-between items-center px-1">
                     <h3 className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Shoot Profile</h3>
-                    <span className="text-[10px] font-black text-cyan-500 uppercase bg-cyan-500/10 px-3 py-1 rounded-full">{selectedPoses.length}/5 Poses Per Item</span>
+                    <span className="text-[10px] font-black text-cyan-500 uppercase bg-cyan-500/10 px-3 py-1 rounded-full">{selectedPoses.length}/6 Poses Per Item</span>
                   </div>
                   <div className="flex flex-wrap gap-2.5">
                     {POSES.map(p => (
@@ -379,12 +377,16 @@ const App: React.FC = () => {
                   </button>
                   <div className="flex justify-between items-center px-6">
                     <div className="flex flex-col">
-                      <p className="text-[10px] text-gray-600 uppercase font-black tracking-[0.2em]">Balance</p>
-                      <p className="text-base font-black text-cyan-500 tracking-tighter">{Math.max(0, DAILY_LIMIT - usage.count)} Remaining</p>
+                      <p className="text-[10px] text-gray-600 uppercase font-black tracking-[0.2em]">Daily Balance</p>
+                      <p className="text-lg font-black text-cyan-400 tracking-tighter">
+                        {Math.max(0, DAILY_LIMIT - usage.count)} <span className="text-[10px] text-gray-500 tracking-normal uppercase ml-1">Credits Remaining</span>
+                      </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-[10px] text-gray-600 uppercase font-black tracking-[0.2em]">Session</p>
-                      <p className="text-[11px] font-bold text-gray-400 truncate max-w-[140px] lowercase">{garments.length} Items Queued</p>
+                      <p className="text-[10px] text-gray-600 uppercase font-black tracking-[0.2em]">Queue</p>
+                      <p className="text-[11px] font-bold text-gray-400 truncate max-w-[140px] lowercase">
+                        {garments.length} {garments.length === 1 ? 'Garment' : 'Garments'}
+                      </p>
                     </div>
                   </div>
                 </div>
