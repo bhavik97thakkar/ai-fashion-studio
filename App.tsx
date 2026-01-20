@@ -15,7 +15,7 @@ import Loader from './components/Loader';
 import ModelOptions from './components/ModelOptions';
 
 const GOOGLE_CLIENT_ID = "309212162577-8tjqu29ece6h0dv9q0bh5h8h80ki0mgn.apps.googleusercontent.com";
-export const DAILY_LIMIT = 50; // Increased to 50 to support professional multi-garment sessions
+export const DAILY_LIMIT = 50; 
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(() => {
@@ -230,6 +230,7 @@ const App: React.FC = () => {
   const isOverLimit = usage.count >= DAILY_LIMIT;
   const willExceedLimit = (usage.count + totalSelectedPoses) > DAILY_LIMIT;
   const allAnalyzed = garments.length > 0 && garments.every(g => !g.isLoading && !!g.analysis);
+  const remainingCredits = Math.max(0, DAILY_LIMIT - usage.count);
 
   if (!hasKey) {
     return (
@@ -379,7 +380,7 @@ const App: React.FC = () => {
                     <div className="flex flex-col">
                       <p className="text-[10px] text-gray-600 uppercase font-black tracking-[0.2em]">Daily Balance</p>
                       <p className="text-lg font-black text-cyan-400 tracking-tighter">
-                        {Math.max(0, DAILY_LIMIT - usage.count)} <span className="text-[10px] text-gray-500 tracking-normal uppercase ml-1">Credits Remaining</span>
+                        {remainingCredits} <span className="text-[10px] text-gray-500 tracking-normal uppercase ml-1">Credits Remaining</span>
                       </p>
                     </div>
                     <div className="text-right">
