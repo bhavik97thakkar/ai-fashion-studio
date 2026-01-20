@@ -30,12 +30,16 @@ const App: React.FC = () => {
     const saved = localStorage.getItem('usage_limit');
     const now = new Date();
     if (saved) {
-      const parsed = JSON.parse(saved);
-      const lastDate = new Date(parsed.lastReset).toDateString();
-      if (now.toDateString() !== lastDate) {
+      try {
+        const parsed = JSON.parse(saved);
+        const lastDate = new Date(parsed.lastReset).toDateString();
+        if (now.toDateString() !== lastDate) {
+          return { count: 0, lastReset: now.toISOString() };
+        }
+        return parsed;
+      } catch (e) {
         return { count: 0, lastReset: now.toISOString() };
       }
-      return parsed;
     }
     return { count: 0, lastReset: now.toISOString() };
   });
@@ -98,7 +102,7 @@ const App: React.FC = () => {
     if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
       try {
         await window.aistudio.openSelectKey();
-        setHasKey(true); // Optimistic proceed
+        setHasKey(true);
       } catch (err) {
         setError("Could not open API Key selector.");
       }
@@ -142,8 +146,9 @@ const App: React.FC = () => {
   }, [garments]);
 
   const handleGenerate = async () => {
+    // Correct check: count must be strictly less than limit to proceed
     if (usage.count >= DAILY_LIMIT) {
-      setError("Your daily limit of 5 shoots is reached. Resets at midnight.");
+      setError("Daily limit of 5 shoots reached. Resets at midnight.");
       return;
     }
     if (garments.length === 0 || !garments[0].analysis) return;
@@ -160,13 +165,16 @@ const App: React.FC = () => {
         selectedSceneId,
         modelPrompt,
         poseDescriptions,
-        (idx, total) => setLoadingMessage(`Crafting Model Shot ${idx} of ${total}...`)
+        (idx, total) => setLoadingMessage(`Producing Visual ${idx} of ${total}...`)
       );
 
       setGeneratedImages(images);
       
-      // Update Usage and History
-      setUsage(prev => ({ ...prev, count: prev.count + 1 }));
+      // Atomic update for usage count
+      setUsage(prev => {
+        const nextCount = prev.count + 1;
+        return { ...prev, count: nextCount };
+      });
       
       const newHistoryEntry: HistoryEntry = {
         id: Date.now().toString(),
@@ -183,7 +191,7 @@ const App: React.FC = () => {
         setHasKey(false);
         setError("Please re-select your API key from a paid project.");
       } else {
-        setError("Generation failed. Check your billing or prompt.");
+        setError("Production failed. Check your billing or settings.");
       }
     } finally {
       setIsLoading(false);
@@ -192,7 +200,6 @@ const App: React.FC = () => {
 
   const loadFromHistory = (entry: HistoryEntry) => {
     setGeneratedImages(entry.images);
-    // Smooth scroll to results
     const resultsSection = document.getElementById('production-output');
     if (resultsSection) {
       resultsSection.scrollIntoView({ behavior: 'smooth' });
@@ -202,8 +209,8 @@ const App: React.FC = () => {
   if (!hasKey) {
     return (
       <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-center p-6 text-center">
-        <h2 className="text-5xl font-black text-white mb-6 tracking-tighter uppercase">Activate <span className="text-cyan-500">PRO</span></h2>
-        <p className="text-gray-400 max-w-md mb-8 leading-relaxed">Select a paid API key to access high-resolution model generation.</p>
+        <h2 className="text-5xl font-black text-white mb-6 tracking-tighter uppercase">Studio <span className="text-cyan-500">Pro</span></h2>
+        <p className="text-gray-400 max-w-md mb-8 leading-relaxed">Please select an API key to begin your professional fashion photoshoot.</p>
         <button onClick={handleSelectKey} className="bg-cyan-500 hover:bg-cyan-400 text-white font-black py-4 px-10 rounded-2xl shadow-2xl uppercase tracking-widest text-xs transition-all">Select API Key</button>
       </div>
     );
@@ -232,7 +239,6 @@ const App: React.FC = () => {
         {!user ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <h2 className="text-7xl font-black text-white mb-4 tracking-tighter uppercase italic">STUDIO<span className="text-cyan-500">PRO</span></h2>
-            <p className="text-gray-500 text-[11px] font-black uppercase tracking-[0.4em] mb-12">Next-Gen Fashion Production</p>
             <div id="google-signin-container" className="scale-110" />
           </div>
         ) : (
@@ -241,7 +247,7 @@ const App: React.FC = () => {
               <div className="space-y-8">
                 <div className="flex justify-between items-end border-b border-gray-800 pb-4">
                   <h2 className="text-4xl font-black uppercase tracking-tighter">Moodboard</h2>
-                  <button onClick={() => fileInputRef.current?.click()} className="text-[10px] font-black uppercase text-cyan-500 hover:text-cyan-400 transition-colors">+ Add Garment</button>
+                  <button onClick={() => fileInputRef.current?.click()} className="text-[10px] font-black uppercase text-cyan-500 hover:text-cyan-400 transition-colors">+ Add</button>
                   <input type="file" ref={fileInputRef} onChange={(e) => e.target.files && handleImageUpload(Array.from(e.target.files))} className="hidden" accept="image/*" />
                 </div>
                 
@@ -263,12 +269,10 @@ const App: React.FC = () => {
                   </div>
                 )}
 
-                {/* Production History Carousel */}
                 {history.length > 0 && (
                   <div className="pt-8 space-y-4">
                     <div className="flex justify-between items-center">
-                      <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Recent Productions</h3>
-                      <span className="text-[9px] text-gray-700 font-bold">{history.length} Saved</span>
+                      <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">History</h3>
                     </div>
                     <div className="flex gap-4 overflow-x-auto pb-6 scrollbar-hide snap-x">
                       {history.map(entry => (
@@ -279,9 +283,6 @@ const App: React.FC = () => {
                         >
                           <div className="aspect-[3/4] rounded-xl overflow-hidden border border-gray-800 group-hover:border-cyan-500/50 transition-all shadow-lg">
                             <img src={entry.garmentPreview} className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-500" />
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
-                               <span className="text-[7px] font-black uppercase text-white truncate w-full">{new Date(entry.timestamp).toLocaleDateString()}</span>
-                            </div>
                           </div>
                         </button>
                       ))}
@@ -301,7 +302,7 @@ const App: React.FC = () => {
                 />
                 
                 <div className="space-y-6">
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Pose Architecture</h3>
+                  <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Architecture</h3>
                   <div className="flex flex-wrap gap-2">
                     {POSES.map(p => (
                       <button key={p.id} onClick={() => setSelectedPoses(prev => prev.includes(p.id) ? (prev.length > 1 ? prev.filter(i => i !== p.id) : prev) : [...prev, p.id])} className={`px-4 py-2 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all ${selectedPoses.includes(p.id) ? 'bg-cyan-500 border-cyan-500 text-white shadow-lg shadow-cyan-500/20' : 'bg-gray-950 border-gray-800 text-gray-500 hover:border-gray-600'}`}>{p.label}</button>
@@ -310,7 +311,7 @@ const App: React.FC = () => {
                 </div>
 
                 <div className="space-y-6">
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Atmosphere</h3>
+                  <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Environment</h3>
                   <SceneSelector selectedSceneId={selectedSceneId} onSelectScene={setSelectedSceneId} customBackgroundImage={null} onCustomBackgroundChange={() => {}} />
                 </div>
 
@@ -320,17 +321,17 @@ const App: React.FC = () => {
                     disabled={isLoading || garments.length === 0 || usage.count >= DAILY_LIMIT} 
                     className={`w-full font-black py-6 rounded-3xl shadow-2xl uppercase tracking-[0.3em] text-[11px] transition-all active:scale-[0.98] ${
                       usage.count >= DAILY_LIMIT 
-                      ? 'bg-gray-800 text-gray-500 cursor-not-allowed border border-gray-700' 
+                      ? 'bg-gray-800 text-gray-600 cursor-not-allowed border border-gray-700/50' 
                       : 'bg-cyan-500 hover:bg-cyan-400 text-white shadow-cyan-500/10'
                     }`}
                   >
-                    {usage.count >= DAILY_LIMIT ? 'Daily Limit Exhausted' : 'Start Production'}
+                    {usage.count >= DAILY_LIMIT ? 'Daily Limit Reached' : 'Start Production'}
                   </button>
                   <div className="flex justify-between items-center px-2">
                     <p className="text-[9px] text-gray-600 uppercase font-black tracking-widest">
-                      {DAILY_LIMIT - usage.count} Credits Remaining
+                      {Math.max(0, DAILY_LIMIT - usage.count)} Remaining Shoots
                     </p>
-                    <p className="text-[8px] text-gray-700 font-bold">Reset at Midnight</p>
+                    <p className="text-[8px] text-gray-700 font-bold">24h Cycle</p>
                   </div>
                 </div>
               </div>
@@ -338,7 +339,7 @@ const App: React.FC = () => {
 
             {generatedImages.length > 0 && (
               <div id="production-output" className="pt-12 border-t border-gray-800 scroll-mt-24">
-                <h2 className="text-3xl font-black uppercase tracking-tighter mb-8 text-center">Final Renders</h2>
+                <h2 className="text-3xl font-black uppercase tracking-tighter mb-8 text-center">Output</h2>
                 <PhotoshootGallery images={generatedImages} onEditRequest={setEditingImage} isPro={true} />
               </div>
             )}
@@ -358,7 +359,7 @@ const App: React.FC = () => {
               setGeneratedImages(prev => prev.map(img => img.id === editingImage.id ? { ...img, src } : img));
               setEditingImage(null);
             } catch (e) {
-              setError("Refinement failed. Try a simpler description.");
+              setError("Refinement failed.");
             } finally {
               setIsLoading(false);
             }
