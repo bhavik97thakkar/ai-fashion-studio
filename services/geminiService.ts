@@ -55,7 +55,7 @@ export const analyzeGarment = async (
       contents: {
         parts: [
           {
-            text: "AI Fashion Expert: Analyze the attached garment image. Provide a highly detailed technical breakdown of its silhouette, fabric texture, specific colors, and construction details to ensure exact replication in an AI-generated photoshoot. Return the data in JSON format.",
+            text: "AI Fashion Expert: Analyze the attached garment image for a professional digital photoshoot. Identify: 1. Garment Type. 2. Fabric and Texture. 3. Primary Color. 4. Secondary Colors. 5. Unique patterns or embellishments (e.g., floral print, sequins, embroidery). 6. Overall style and fit. Return the data strictly in JSON format matching the schema.",
           },
           imagePart,
         ],
@@ -67,10 +67,23 @@ export const analyzeGarment = async (
           properties: {
             garmentType: { type: Type.STRING },
             fabric: { type: Type.STRING },
-            colorPalette: { type: Type.ARRAY, items: { type: Type.STRING } },
-            style: { type: Type.STRING },
+            colorPalette: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+              description:
+                "List containing primary color first, then secondary colors.",
+            },
+            style: {
+              type: Type.STRING,
+              description:
+                "Detailed description of style, fit, and silhouette.",
+            },
             gender: { type: Type.STRING },
-            uniquenessLevel: { type: Type.STRING },
+            uniquenessLevel: {
+              type: Type.STRING,
+              description:
+                "Specifically mention any patterns, prints, or unique embellishments found.",
+            },
           },
           required: [
             "garmentType",
@@ -112,7 +125,9 @@ export const generatePhotoshoot = async (
   // Prompt engineering focused on garment accuracy and model/scene consistency
   const baseVisualRules = `
         PROFESSIONAL E-COMMERCE PHOTOGRAPHY.
-        GARMENT ACCURACY: The model MUST wear the EXACT same ${analysis.garmentType} shown in the first reference image. Replicate the specific patterns, textures, colors, and design details perfectly.
+        GARMENT ACCURACY: The model MUST wear the EXACT same ${analysis.garmentType} shown in the first reference image. 
+        MANDATORY: Replicate the primary color (${analysis.colorPalette[0]}), secondary colors (${analysis.colorPalette.slice(1).join(", ")}), 
+        and specifically these details: ${analysis.uniquenessLevel}.
         Model: ${modelPrompt}.
         Scene: ${sceneDescription}.
         Quality: Photorealistic, 8k, neutral professional lighting, high clarity.
@@ -142,9 +157,9 @@ export const generatePhotoshoot = async (
 
         const frameSpecificInstruction = `
                     STRICT ANCHORING REQUIREMENTS:
-                    1. PRODUCT IDENTITY: The model's outfit MUST match the garment reference image exactly. No design variations allowed.
-                    2. MODEL IDENTITY: Keep the exact same face, hair, and physique from the second reference image.
-                    3. BACKGROUND IDENTITY: Keep the exact same background environment and lighting as the second reference image.
+                    1. PRODUCT IDENTITY: The model's outfit MUST match the garment reference image exactly in color, texture, and pattern. No design variations allowed.
+                    2. MODEL IDENTITY: REUSE the exact same face, hair style, hair color, and skin tone from the second reference image.
+                    3. BACKGROUND IDENTITY: REUSE the exact same background environment, floor, walls, and lighting setup from the second reference image.
                     4. ACTION: Position the model in the following pose: ${poses[i]}.
                 `;
 
