@@ -55,7 +55,7 @@ export const analyzeGarment = async (
       contents: {
         parts: [
           {
-            text: "AI Stylist: Extract garment metadata. Identify: Type, Fabric, fit/silhouette, primary colors, and gender target. Be concise.",
+            text: "AI Fashion Expert: Analyze the attached garment image. Provide a highly detailed technical breakdown of its silhouette, fabric texture, specific colors, and construction details to ensure exact replication in an AI-generated photoshoot. Return the data in JSON format.",
           },
           imagePart,
         ],
@@ -109,12 +109,13 @@ export const generatePhotoshoot = async (
     SCENE_PRESETS.find((s) => s.id === sceneId)?.description || "Studio";
   const results: PhotoshootImage[] = [];
 
+  // Prompt engineering focused on garment accuracy and model/scene consistency
   const baseVisualRules = `
-        High-End Fashion Editorial.
+        PROFESSIONAL E-COMMERCE PHOTOGRAPHY.
+        GARMENT ACCURACY: The model MUST wear the EXACT same ${analysis.garmentType} shown in the first reference image. Replicate the specific patterns, textures, colors, and design details perfectly.
         Model: ${modelPrompt}.
         Scene: ${sceneDescription}.
-        Garment: ${analysis.style} ${analysis.garmentType} (${analysis.fabric}).
-        Quality: 8k resolution, cinematic studio lighting, sharp focus.
+        Quality: Photorealistic, 8k, neutral professional lighting, high clarity.
     `;
 
   let masterReferenceB64: string | null = null;
@@ -131,22 +132,25 @@ export const generatePhotoshoot = async (
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
         const parts: any[] = [];
 
+        // PART 1: The Product (Garment) Source - ALWAYS PRESENT
         parts.push(fileToGenerativePart(garmentImage, "image/jpeg"));
 
+        // PART 2: The Visual Anchor (First shot generated) - Locking model and background
         if (masterReferenceB64) {
           parts.push(fileToGenerativePart(masterReferenceB64, "image/png"));
         }
 
         const frameSpecificInstruction = `
-                    MANDATORY CONSISTENCY (STRICT ANCHORING):
-                    1. CLONE THE MODEL: Reproduce the exact same face, eye color, hair style, and skin tone from the reference image.
-                    2. UNIFORM ENVIRONMENT: Keep the background and lighting sources 100% identical.
-                    3. TASK: Modify ONLY the pose to: ${poses[i]}.
+                    STRICT ANCHORING REQUIREMENTS:
+                    1. PRODUCT IDENTITY: The model's outfit MUST match the garment reference image exactly. No design variations allowed.
+                    2. MODEL IDENTITY: Keep the exact same face, hair, and physique from the second reference image.
+                    3. BACKGROUND IDENTITY: Keep the exact same background environment and lighting as the second reference image.
+                    4. ACTION: Position the model in the following pose: ${poses[i]}.
                 `;
 
         const finalPrompt = masterReferenceB64
           ? `${baseVisualRules}\n${frameSpecificInstruction}`
-          : `${baseVisualRules}\nEstablish Model Identity. Pose: ${poses[i]}.`;
+          : `${baseVisualRules}\nEstablish Model Identity and Scene. Pose: ${poses[i]}. Use the provided garment image as the ONLY source for the model's outfit.`;
 
         parts.push({ text: finalPrompt });
 
@@ -183,7 +187,7 @@ export const generatePhotoshoot = async (
             continue;
           }
         }
-        throw error; // Let the caller handle major failures
+        throw error;
       }
     }
   }
@@ -202,7 +206,9 @@ export const editImage = async (
       contents: {
         parts: [
           fileToGenerativePart(base64Image, "image/jpeg"),
-          { text: `Refine: ${prompt}. Maintain model/garment identity.` },
+          {
+            text: `Refine: ${prompt}. Preserve the garment design and model identity exactly.`,
+          },
         ],
       },
       config: {
