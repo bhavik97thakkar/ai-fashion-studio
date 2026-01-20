@@ -40,7 +40,7 @@ const handleGeminiError = (error: any) => {
 };
 
 /**
- * Efficiently analyzes the garment with a focus on color accuracy and unique embellishments.
+ * Enhanced analysis to extract colors, patterns, and embellishments precisely.
  */
 export const analyzeGarment = async (
   base64Image: string,
@@ -55,7 +55,7 @@ export const analyzeGarment = async (
       contents: {
         parts: [
           {
-            text: "AI Fashion Expert: Analyze this garment image for professional photoshoot replication. Identify the garment type, fabric texture, primary color, all secondary colors, and specifically describe unique patterns, prints, or embellishments (like embroidery, sequins, or unique textures). Ensure the analysis is precise for image generation grounding.",
+            text: "AI Fashion Stylist: Analyze this garment. Extract: 1. Garment Type. 2. Primary Color. 3. Secondary Colors list. 4. Fabric texture. 5. Detailed description of unique patterns, embroidery, or embellishments. 6. Target fit style. Return JSON.",
           },
           imagePart,
         ],
@@ -70,17 +70,15 @@ export const analyzeGarment = async (
             colorPalette: {
               type: Type.ARRAY,
               items: { type: Type.STRING },
-              description: "Primary color first, followed by secondary colors.",
+              description:
+                "First item is Primary Color, others are Secondary Colors.",
             },
-            style: {
-              type: Type.STRING,
-              description: "Detailed fit and silhouette description.",
-            },
+            style: { type: Type.STRING },
             gender: { type: Type.STRING },
             uniquenessLevel: {
               type: Type.STRING,
               description:
-                "Detailed description of patterns, embroidery, or unique embellishments.",
+                "Detailed description of patterns and embellishments.",
             },
           },
           required: [
@@ -95,7 +93,8 @@ export const analyzeGarment = async (
       },
     });
 
-    return JSON.parse(response.text || "{}");
+    const text = response.text || "{}";
+    return JSON.parse(text);
   } catch (error: any) {
     if (isRetryableError(error) && retryCount < 3) {
       await delay(1000 * Math.pow(2, retryCount));
@@ -106,7 +105,7 @@ export const analyzeGarment = async (
 };
 
 /**
- * Generates the photoshoot with strict visual consistency using the first generated image as a permanent anchor.
+ * Generates the photoshoot with a Master Identity Anchor to ensure 1:1 model and background consistency.
  */
 export const generatePhotoshoot = async (
   garmentImage: string,
@@ -122,16 +121,15 @@ export const generatePhotoshoot = async (
   const results: PhotoshootImage[] = [];
 
   const baseVisualRules = `
-        PROFESSIONAL E-COMMERCE PHOTOGRAPHY.
-        GARMENT FIDELITY: The model MUST wear the EXACT ${analysis.garmentType} from the source. 
-        MANDATORY: Replicate the primary color (${analysis.colorPalette[0]}), secondary colors (${analysis.colorPalette.slice(1).join(", ")}), 
-        and the specific pattern/embellishment details: ${analysis.uniquenessLevel}.
-        Model Description: ${modelPrompt}.
+        PROFESSIONAL HIGH-END FASHION PHOTOGRAPHY.
+        GARMENT FIDELITY: The model must wear the EXACT ${analysis.garmentType} provided in the product reference image.
+        SPECIFICATIONS: Primary color: ${analysis.colorPalette[0]}, Secondary colors: ${analysis.colorPalette.slice(1).join(", ")}, Patterns/Embellishments: ${analysis.uniquenessLevel}.
+        Model Characteristics: ${modelPrompt}.
         Atmosphere: ${sceneDescription}.
-        Quality: 8k, photorealistic, sharp focus on fabric texture, professional lighting.
+        Technical: 8k resolution, photorealistic, neutral cinematic lighting, sharp focus.
     `;
 
-  // masterReferenceB64 acts as the "Identity Anchor" for model face, hair, and lighting.
+  // masterReferenceB64 is our "Visual Anchor" for subsequent frames
   let masterReferenceB64: string | null = null;
 
   for (let i = 0; i < poses.length; i++) {
@@ -146,27 +144,25 @@ export const generatePhotoshoot = async (
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
         const parts: any[] = [];
 
-        // Always provide the original garment as the primary product reference
+        // PART 1: The original product reference (ALWAYS sent)
         parts.push(fileToGenerativePart(garmentImage, "image/jpeg"));
 
-        // After the first image, provide it back to the model to LOCK the identity
+        // PART 2: The "Master Frame" (Sent for shots 2, 3, 4...)
         if (masterReferenceB64) {
           parts.push(fileToGenerativePart(masterReferenceB64, "image/png"));
         }
 
-        const frameSpecificInstruction = `
-                    CRITICAL - IDENTITY SYNC:
-                    1. CLONE THE MODEL: You MUST reuse the EXACT same face, eye shape, hair color, and hair style from the reference image.
-                    2. LOCK THE SCENE: The background, floor, wall texture, and lighting direction MUST be identical to the reference image.
-                    3. REPLICATE GARMENT: The clothing pattern and colors must be 100% consistent with the original product reference.
-                    4. ACTION: Position the model in the following pose: ${poses[i]}.
-                `;
+        const frameInstruction = masterReferenceB64
+          ? `
+                        STRICT IDENTITY & ENVIRONMENT LOCK:
+                        1. MODEL FACE/HAIR: Replicate the EXACT face, hairstyle, hair color, and features from the secondary reference image.
+                        2. BACKGROUND/LIGHTING: Replicate the EXACT background, floor, wall texture, and lighting setup from the secondary reference image. DO NOT CHANGE THE ROOM.
+                        3. GARMENT: Keep the outfit identical to the first product reference image.
+                        4. NEW POSE: ${poses[i]}.
+                      `
+          : `Establish the definitive model identity and background environment. Use the provided garment reference image as the ONLY outfit source. Pose: ${poses[i]}.`;
 
-        const finalPrompt = masterReferenceB64
-          ? `${baseVisualRules}\n${frameSpecificInstruction}`
-          : `${baseVisualRules}\nEstablish the permanent Model Identity and Background. Pose: ${poses[i]}. The model's outfit must match the provided garment image exactly.`;
-
-        parts.push({ text: finalPrompt });
+        parts.push({ text: `${baseVisualRules}\n${frameInstruction}` });
 
         const response = await ai.models.generateContent({
           model: IMAGE_MODEL,
@@ -177,22 +173,22 @@ export const generatePhotoshoot = async (
         });
 
         const imagePart = response.candidates?.[0]?.content?.parts.find(
-          (part) => part.inlineData,
+          (p) => p.inlineData,
         );
         if (imagePart?.inlineData) {
           const b64 = imagePart.inlineData.data;
           results.push({
-            id: `shot-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 5)}`,
+            id: `shot-${Date.now()}-${i}`,
             src: `data:image/png;base64,${b64}`,
           });
 
-          // Capture the first image as the "Master Anchor" for all future frames in this batch
+          // Capture the very first successful generation to act as the visual anchor for all other poses
           if (!masterReferenceB64) {
             masterReferenceB64 = b64;
           }
           success = true;
         } else {
-          throw new Error("API failed to generate visual part");
+          throw new Error("Generation part missing");
         }
       } catch (error: any) {
         if (isRetryableError(error)) {
@@ -222,7 +218,7 @@ export const editImage = async (
         parts: [
           fileToGenerativePart(base64Image, "image/jpeg"),
           {
-            text: `Refine this fashion asset: ${prompt}. Maintain the exact garment design and model face.`,
+            text: `Edit Instruction: ${prompt}. Keep the garment design and model identity identical to the original image.`,
           },
         ],
       },
