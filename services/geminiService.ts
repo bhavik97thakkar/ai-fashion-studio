@@ -79,16 +79,16 @@ export const generatePhotoshoot = async (
     "Professional Studio";
   const results: PhotoshootImage[] = [];
 
-  // The Master Prompt ensures initial direction is high quality
+  // The core style DNA
   const baseSystemPrompt = `
-        High-end professional fashion editorial photography. 
-        Model: ${modelPrompt}. 
+        HIGH-END FASHION EDITORIAL. 
+        Model characteristics: ${modelPrompt}. 
         Setting: ${sceneDescription}. 
-        Garment: ${analysis.style} ${analysis.garmentType} in ${analysis.colorPalette.join(", ")}.
-        Quality: 8k resolution, photorealistic, sharp focus, magazine quality.
+        Product: ${analysis.style} ${analysis.garmentType} in ${analysis.colorPalette.join(", ")}.
+        Photography style: Photorealistic, 8k, sharp focus, magazine quality, consistent lighting.
     `;
 
-  let firstGeneratedImageBase64: string | null = null;
+  let masterReferenceB64: string | null = null;
 
   for (let i = 0; i < poses.length; i++) {
     onProgress(i + 1, poses.length);
@@ -99,24 +99,22 @@ export const generatePhotoshoot = async (
       let promptText = "";
 
       if (i === 0) {
-        // First image: establish the "Master Look"
+        // ESTABLISH THE LOOK
         promptText = `
                     ${baseSystemPrompt}
-                    ACTION: Full body shot, ${poses[i]}.
-                    Establish a definitive model face, hair, and lighting style.
+                    ACTION: Full body fashion shot, ${poses[i]}.
+                    IMPORTANT: This is the reference frame. Create a distinct, high-quality model face and environment.
                 `.trim();
-      } else if (firstGeneratedImageBase64) {
-        // Subsequent images: Use the first image as a visual reference
-        parts.push(
-          fileToGenerativePart(firstGeneratedImageBase64, "image/png"),
-        );
+      } else if (masterReferenceB64) {
+        // ENFORCE THE LOOK
+        parts.push(fileToGenerativePart(masterReferenceB64, "image/png"));
         promptText = `
                     ${baseSystemPrompt}
-                    STRICT VISUAL CONSISTENCY: 
-                    1. Use the EXACT SAME PERSON (face, features, hair) as seen in the second reference image.
-                    2. Use the EXACT SAME BACKGROUND and lighting as the second reference image.
-                    3. The only change is the pose.
-                    ACTION: Current pose is ${poses[i]}.
+                    STRICT CHARACTER AND ENVIRONMENT LOCK:
+                    1. CLONE THE MODEL: Use the EXACT SAME face, features, hairstyle, and skin tone as seen in the second reference image.
+                    2. CLONE THE BACKGROUND: Use the EXACT SAME background, props, and lighting conditions as the second reference image.
+                    3. CHANGE ONLY THE POSE: The model is now in this specific pose: ${poses[i]}.
+                    Everything else must remain identical to maintain professional catalog consistency.
                 `.trim();
       }
 
@@ -143,9 +141,9 @@ export const generatePhotoshoot = async (
           src: `data:image/png;base64,${b64}`,
         });
 
-        // Save the very first result to use as the visual anchor for all other poses
+        // We keep the VERY FIRST image as the master visual anchor for all subsequent generations
         if (i === 0) {
-          firstGeneratedImageBase64 = b64;
+          masterReferenceB64 = b64;
         }
       }
     } catch (error: any) {
@@ -154,7 +152,7 @@ export const generatePhotoshoot = async (
         error.message?.includes("404")
       )
         throw new Error("RESELECT_KEY");
-      console.error("Frame failed", error);
+      console.error(`Pose ${i} failed:`, error);
     }
   }
   return results;
@@ -171,7 +169,7 @@ export const editImage = async (
       parts: [
         fileToGenerativePart(base64Image, "image/jpeg"),
         {
-          text: `Refine this fashion photograph: ${prompt}. Maintain model identity and background consistency.`,
+          text: `Refine this fashion photograph: ${prompt}. Maintain strict model identity and background consistency.`,
         },
       ],
     },
