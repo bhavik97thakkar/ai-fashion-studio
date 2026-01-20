@@ -109,9 +109,11 @@ export const generatePhotoshoot = async (
         Setting: ${sceneDescription}. 
         Product: ${analysis.style} ${analysis.garmentType} made of ${analysis.fabric}. 
         Lighting: Editorial studio lighting, high contrast, clean shadows.
+        Consistency: STRICT VISUAL IDENTITY. The model's face, hair, and the background environment must be identical to the provided reference image.
         Quality: Photorealistic, 8k, sharp focus.
     `;
 
+  // Static anchor for model and background consistency across the whole loop
   let masterReferenceB64: string | null = null;
 
   for (let i = 0; i < poses.length; i++) {
@@ -123,17 +125,19 @@ export const generatePhotoshoot = async (
       onProgress(i + 1, poses.length, attempts > 0);
 
       try {
-        // Initialize fresh instance per attempt to ensure correct model is used
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
-        const parts: any[] = [fileToGenerativePart(garmentImage, "image/jpeg")];
-        let promptText = "";
+        const parts: any[] = [];
 
-        if (i === 0 || !masterReferenceB64) {
-          promptText = `${baseSystemPrompt} Pose: ${poses[i]}. Focus on garment texture.`;
-        } else {
+        // Always provide the garment reference
+        parts.push(fileToGenerativePart(garmentImage, "image/jpeg"));
+
+        // If we have already generated one frame, use it as a master anchor for the rest
+        if (masterReferenceB64) {
           parts.push(fileToGenerativePart(masterReferenceB64, "image/png"));
-          promptText = `${baseSystemPrompt} Pose: ${poses[i]}. Maintain the same model identity and background from the reference image.`;
         }
+
+        const promptText = `${baseSystemPrompt} Pose: ${poses[i]}. 
+                ${masterReferenceB64 ? "EXTREMELY IMPORTANT: Match the person and background from the reference photo exactly. Only change the pose." : "This is the first shot, establish the model identity and background style."}`;
 
         parts.push({ text: promptText });
 
@@ -154,7 +158,11 @@ export const generatePhotoshoot = async (
             id: `img-${Date.now()}-${i}`,
             src: `data:image/png;base64,${b64}`,
           });
-          if (i === 0) masterReferenceB64 = b64;
+
+          // Anchor the first successful image as the "Master Model & Background" reference
+          if (!masterReferenceB64) {
+            masterReferenceB64 = b64;
+          }
           success = true;
         } else {
           throw new Error("No image data returned");
