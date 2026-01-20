@@ -15,7 +15,7 @@ import Loader from './components/Loader';
 import ModelOptions from './components/ModelOptions';
 
 const GOOGLE_CLIENT_ID = "309212162577-8tjqu29ece6h0dv9q0bh5h8h80ki0mgn.apps.googleusercontent.com";
-const DAILY_LIMIT = 20; // Increased limit for multi-garment sessions
+const DAILY_LIMIT = 20;
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(() => {
@@ -113,26 +113,33 @@ const App: React.FC = () => {
   }, [user, syncAllUserData]);
 
   const processUploads = async (files: File[]) => {
-    const newGarments = await Promise.all(files.map(async file => ({
-      id: `${file.name}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      file,
-      preview: await fileToBase64(file),
-      analysis: null,
-      isLoading: true,
-    })));
+    const newGarments: UploadedGarment[] = await Promise.all(
+      files.map(async file => ({
+        id: `${file.name}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        file,
+        preview: await fileToBase64(file),
+        analysis: null,
+        isLoading: true,
+      }))
+    );
     
+    // Use functional update to ensure we don't overwrite previous uploads
     setGarments(prev => [...prev, ...newGarments]);
 
-    // Batch process analysis
-    for (const g of newGarments) {
+    // Process analysis for each new garment individually
+    newGarments.forEach(async (g) => {
       try {
         const analysis = await geminiService.analyzeGarment(g.preview);
-        setGarments(prev => prev.map(item => item.id === g.id ? { ...item, analysis, isLoading: false } : item));
+        setGarments(prev => prev.map(item => 
+          item.id === g.id ? { ...item, analysis, isLoading: false } : item
+        ));
       } catch (err: any) {
-        setGarments(prev => prev.map(item => item.id === g.id ? { ...item, isLoading: false, error: "Analysis failed" } : item));
+        setGarments(prev => prev.map(item => 
+          item.id === g.id ? { ...item, isLoading: false, error: "Analysis failed" } : item
+        ));
         if (err.message === "RESELECT_KEY") window.aistudio?.openSelectKey();
       }
-    }
+    });
   };
 
   const handleGenerate = async () => {
@@ -157,7 +164,6 @@ const App: React.FC = () => {
       const modelPrompt = `${selectedGender}, age ${selectedAge}, ${selectedEthnicity}, ${selectedBodyType}. ${creativeDetails}`;
       const poseDescriptions = POSES.filter(p => selectedPoses.includes(p.id)).map(p => p.description);
       
-      // Loop through all uploaded garments for batch production
       for (let i = 0; i < garments.length; i++) {
         const g = garments[i];
         if (!g.analysis) continue;
