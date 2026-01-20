@@ -28,7 +28,6 @@ const App: React.FC = () => {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
 
   const syncAllUserData = useCallback(async (email: string) => {
-    // 1. Fetch from Cloud first (Source of Truth)
     const cloudUsage = await cloudDB.syncUsageFromCloud(email);
     const usageKey = `usage_limit_${email}`;
     const historyKey = `history_${email}`;
@@ -37,27 +36,21 @@ const App: React.FC = () => {
     let currentUsage: UsageLimit;
 
     if (cloudUsage && cloudUsage.count !== undefined) {
-      // Data exists in DB, use it
       currentUsage = { count: cloudUsage.count, lastReset: cloudUsage.last_reset };
     } else {
-      // CRITICAL FIX: If DB is empty/deleted, FORCE reset everything local
-      console.log(`[Sync] No cloud record for ${email}. Resetting local usage.`);
       currentUsage = { count: 0, lastReset: now.toISOString() };
       localStorage.removeItem(usageKey); 
     }
 
-    // 2. Daily Reset Check (if user hasn't been deleted but it's a new day)
     const lastDate = new Date(currentUsage.lastReset).toDateString();
     if (now.toDateString() !== lastDate) {
       currentUsage = { count: 0, lastReset: now.toISOString() };
       cloudDB.updateUsageInCloud(email, 0, now.toISOString());
     }
     
-    // 3. Update State and Sync Local
     setUsage(currentUsage);
     localStorage.setItem(usageKey, JSON.stringify(currentUsage));
 
-    // 4. Sync History
     const savedHistory = localStorage.getItem(historyKey);
     if (savedHistory) {
       try { 
@@ -151,7 +144,8 @@ const App: React.FC = () => {
       return;
     }
 
-    const totalPosesToGenerate = garments.length * selectedPoses.length;
+    // NEW LOGIC: Cost is strictly per selected pose, regardless of how many reference images are uploaded
+    const totalPosesToGenerate = selectedPoses.length;
     const currentRemaining = DAILY_LIMIT - usage.count;
     
     if (currentRemaining < totalPosesToGenerate) {
@@ -165,21 +159,27 @@ const App: React.FC = () => {
 
     try {
       const modelPrompt = `${selectedGender}, age ${selectedAge}, ${selectedEthnicity}, ${selectedBodyType}. ${creativeDetails}`;
-      const poseDescriptions = POSES.filter(p => selectedPoses.includes(p.id)).map(p => p.description);
+      const poseOptions = POSES.filter(p => selectedPoses.includes(p.id));
       
-      for (let i = 0; i < garments.length; i++) {
-        const g = garments[i];
+      // We iterate through selected poses, picking from available garments as references
+      for (let i = 0; i < poseOptions.length; i++) {
+        const poseObj = poseOptions[i];
+        // Cycle through uploaded garments if more poses are requested than images provided
+        const garmentIndex = i % garments.length;
+        const g = garments[garmentIndex];
+        
         if (!g.analysis) continue;
+
+        setLoadingMessage(`PRODUCING COLLECTION: FRAME ${i + 1}/${poseOptions.length}`);
 
         const garmentImages = await geminiService.generatePhotoshoot(
           g.preview,
           g.analysis,
           selectedSceneId,
           modelPrompt,
-          poseDescriptions,
+          [poseObj.description],
           (idx, total, isRetrying) => {
-            const baseMsg = `PRODUCING COLLECTION: ITEM ${i + 1}/${garments.length} | FRAME ${idx}/${total}`;
-            setLoadingMessage(isRetrying ? `SERVER OVERLOADED. RETRYING FRAME ${idx}/${total}...` : baseMsg);
+             if (isRetrying) setLoadingMessage(`RETRYING FRAME ${i + 1}/${poseOptions.length}...`);
           }
         );
         allSessionImages = [...allSessionImages, ...garmentImages];
@@ -231,7 +231,8 @@ const App: React.FC = () => {
     });
   };
 
-  const totalSelectedPoses = garments.length * selectedPoses.length;
+  // Cost is based purely on the number of poses selected
+  const totalSelectedPoses = selectedPoses.length;
   const isOverLimit = usage.count >= DAILY_LIMIT;
   const willExceedLimit = (usage.count + totalSelectedPoses) > DAILY_LIMIT;
   const allAnalyzed = garments.length > 0 && garments.every(g => !g.isLoading && !!g.analysis);
@@ -349,7 +350,7 @@ const App: React.FC = () => {
                 <div className="space-y-6">
                   <div className="flex justify-between items-center px-1">
                     <h3 className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Shoot Profile</h3>
-                    <span className="text-[10px] font-black text-cyan-500 uppercase bg-cyan-500/10 px-3 py-1 rounded-full">{selectedPoses.length}/6 Poses Per Item</span>
+                    <span className="text-[10px] font-black text-cyan-500 uppercase bg-cyan-500/10 px-3 py-1 rounded-full">{selectedPoses.length}/6 Poses Selected</span>
                   </div>
                   <div className="flex flex-wrap gap-2.5">
                     {POSES.map(p => (
@@ -391,7 +392,7 @@ const App: React.FC = () => {
                     <div className="text-right">
                       <p className="text-[10px] text-gray-600 uppercase font-black tracking-[0.2em]">Queue</p>
                       <p className="text-[11px] font-bold text-gray-400 truncate max-w-[140px] lowercase">
-                        {garments.length} {garments.length === 1 ? 'Garment' : 'Garments'}
+                        {garments.length} {garments.length === 1 ? 'Reference' : 'References'}
                       </p>
                     </div>
                   </div>
