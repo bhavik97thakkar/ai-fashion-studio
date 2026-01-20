@@ -136,7 +136,10 @@ const App: React.FC = () => {
         selectedSceneId,
         modelPrompt,
         poseDescriptions,
-        (idx, total) => setLoadingMessage(`Crafting Frame ${idx}/${total}... HD rendering takes ~15s per pose.`)
+        (idx, total, isRetrying) => {
+          const baseMsg = `Crafting Frame ${idx}/${total}... HD rendering takes ~15s per pose.`;
+          setLoadingMessage(isRetrying ? `Server busy. Retrying Frame ${idx}/${total}...` : baseMsg);
+        }
       );
 
       if (images.length > 0) {
@@ -158,17 +161,16 @@ const App: React.FC = () => {
         setHistory(newHistory);
         localStorage.setItem(`history_${user.email}`, JSON.stringify(newHistory));
         
-        // Auto-scroll to result
         setTimeout(() => {
           document.getElementById('production-output')?.scrollIntoView({ behavior: 'smooth' });
         }, 100);
       }
     } catch (e: any) {
       if (e.message === "RESELECT_KEY") {
-        setError("API Key session expired or invalid. Please re-select.");
+        setError("Production session expired. Please re-select your API key.");
         window.aistudio?.openSelectKey();
       } else {
-        setError("Production failed. The server might be overloaded. Please try again with fewer poses.");
+        setError("Server is temporarily unavailable (503). This often happens when the HD model is under heavy load. Please try again in a few seconds.");
       }
     } finally {
       setIsLoading(false);

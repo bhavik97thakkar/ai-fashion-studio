@@ -14,6 +14,17 @@ const fileToGenerativePart = (base64Data: string, mimeType: string) => {
 
 const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
+const isRetryableError = (error: any): boolean => {
+  const msg = error.message?.toLowerCase() || "";
+  // 503 Service Unavailable or overloaded are common for pro image models
+  return (
+    msg.includes("503") ||
+    msg.includes("overloaded") ||
+    msg.includes("deadline") ||
+    msg.includes("resource exhausted")
+  );
+};
+
 const handleGeminiError = (error: any) => {
   const msg = error.message?.toLowerCase() || "";
   if (
@@ -24,18 +35,12 @@ const handleGeminiError = (error: any) => {
   ) {
     throw new Error("RESELECT_KEY");
   }
-  if (
-    msg.includes("503") ||
-    msg.includes("overloaded") ||
-    msg.includes("deadline")
-  ) {
-    return "RETRY";
-  }
   throw error;
 };
 
 export const analyzeGarment = async (
   base64Image: string,
+  retryCount = 0,
 ): Promise<GarmentAnalysis> => {
   try {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
@@ -77,12 +82,11 @@ export const analyzeGarment = async (
 
     return JSON.parse(response.text || "{}");
   } catch (error: any) {
-    const action = handleGeminiError(error);
-    if (action === "RETRY") {
-      await delay(2000);
-      return analyzeGarment(base64Image);
+    if (isRetryableError(error) && retryCount < 2) {
+      await delay(2000 * (retryCount + 1));
+      return analyzeGarment(base64Image, retryCount + 1);
     }
-    throw error;
+    return handleGeminiError(error);
   }
 };
 
@@ -92,7 +96,7 @@ export const generatePhotoshoot = async (
   sceneId: SceneId,
   modelPrompt: string,
   poses: string[],
-  onProgress: (index: number, total: number) => void,
+  onProgress: (index: number, total: number, isRetrying?: boolean) => void,
 ): Promise<PhotoshootImage[]> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
   const sceneDescription =
@@ -100,12 +104,12 @@ export const generatePhotoshoot = async (
     "Professional fashion studio background";
   const results: PhotoshootImage[] = [];
 
+  // Leaner prompt to reduce compute overhead and likelihood of 503
   const baseSystemPrompt = `
-        High-end commercial fashion photography. 
-        Model: ${modelPrompt}. 
-        Set: ${sceneDescription}. 
-        Garment: A ${analysis.style} ${analysis.garmentType} in ${analysis.colorPalette.join(", ")}.
-        Quality: 8k resolution, cinematic lighting, sharp focus on garment texture.
+        High-end fashion shoot. Model: ${modelPrompt}. 
+        Setting: ${sceneDescription}. 
+        Item: ${analysis.style} ${analysis.garmentType}. 
+        Style: Photorealistic, cinematic lighting, 8k.
     `;
 
   let masterReferenceB64: string | null = null;
@@ -113,18 +117,20 @@ export const generatePhotoshoot = async (
   for (let i = 0; i < poses.length; i++) {
     let attempts = 0;
     const maxAttempts = 3;
+    let success = false;
 
-    while (attempts < maxAttempts) {
-      onProgress(i + 1, poses.length);
+    while (attempts < maxAttempts && !success) {
+      onProgress(i + 1, poses.length, attempts > 0);
+
       try {
         const parts: any[] = [fileToGenerativePart(garmentImage, "image/jpeg")];
         let promptText = "";
 
         if (i === 0) {
-          promptText = `${baseSystemPrompt} Pose: ${poses[i]}. Focus on high-fidelity facial features and fabric details.`;
+          promptText = `${baseSystemPrompt} Pose: ${poses[i]}. Sharp fabric detail.`;
         } else if (masterReferenceB64) {
           parts.push(fileToGenerativePart(masterReferenceB64, "image/png"));
-          promptText = `${baseSystemPrompt} Pose: ${poses[i]}. CLONE MODEL IDENTITY AND LIGHTING from reference image.`;
+          promptText = `${baseSystemPrompt} Pose: ${poses[i]}. Keep same model and background.`;
         }
 
         parts.push({ text: promptText });
@@ -147,17 +153,20 @@ export const generatePhotoshoot = async (
             src: `data:image/png;base64,${b64}`,
           });
           if (i === 0) masterReferenceB64 = b64;
-          break;
-        }
-        throw new Error("Empty response");
-      } catch (error: any) {
-        const action = handleGeminiError(error);
-        if (action === "RETRY") {
-          attempts++;
-          await delay(1000 * Math.pow(2, attempts));
+          success = true;
         } else {
-          throw error;
+          throw new Error("No image data returned from API");
         }
+      } catch (error: any) {
+        if (isRetryableError(error)) {
+          attempts++;
+          if (attempts < maxAttempts) {
+            const backoff = 2000 * Math.pow(2, attempts); // 4s, 8s...
+            await delay(backoff);
+            continue;
+          }
+        }
+        return handleGeminiError(error);
       }
     }
   }
@@ -167,6 +176,7 @@ export const generatePhotoshoot = async (
 export const editImage = async (
   base64Image: string,
   prompt: string,
+  retryCount = 0,
 ): Promise<string> => {
   try {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
@@ -175,9 +185,7 @@ export const editImage = async (
       contents: {
         parts: [
           fileToGenerativePart(base64Image, "image/jpeg"),
-          {
-            text: `Fashion Refinement: ${prompt}. Maintain model face and environment.`,
-          },
+          { text: `Edit: ${prompt}. Keep consistency.` },
         ],
       },
       config: {
@@ -190,11 +198,18 @@ export const editImage = async (
     if (!part?.inlineData) throw new Error("Edit failed");
     return `data:image/png;base64,${part.inlineData.data}`;
   } catch (error: any) {
-    throw error;
+    if (isRetryableError(error) && retryCount < 2) {
+      await delay(3000);
+      return editImage(base64Image, prompt, retryCount + 1);
+    }
+    return handleGeminiError(error);
   }
 };
 
-export const generateImage = async (prompt: string): Promise<string> => {
+export const generateImage = async (
+  prompt: string,
+  retryCount = 0,
+): Promise<string> => {
   try {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
     const response = await ai.models.generateContent({
@@ -210,6 +225,10 @@ export const generateImage = async (prompt: string): Promise<string> => {
     if (!part?.inlineData) throw new Error("Generation failed");
     return `data:image/png;base64,${part.inlineData.data}`;
   } catch (error: any) {
-    throw error;
+    if (isRetryableError(error) && retryCount < 2) {
+      await delay(3000);
+      return generateImage(prompt, retryCount + 1);
+    }
+    return handleGeminiError(error);
   }
 };
