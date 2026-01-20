@@ -15,7 +15,7 @@ import Loader from './components/Loader';
 import ModelOptions from './components/ModelOptions';
 
 const GOOGLE_CLIENT_ID = "309212162577-8tjqu29ece6h0dv9q0bh5h8h80ki0mgn.apps.googleusercontent.com";
-export const DAILY_LIMIT = 50; 
+export const DAILY_LIMIT = 5; // Reverted back to 5 as requested
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(() => {
@@ -150,7 +150,7 @@ const App: React.FC = () => {
     const currentRemaining = DAILY_LIMIT - usage.count;
     
     if (currentRemaining < totalPosesToGenerate) {
-      setError(`Insufficient credits. Session requires ${totalPosesToGenerate} tokens. You have ${currentRemaining} remaining.`);
+      setError(`Insufficient credits. You need ${totalPosesToGenerate} tokens for this session, but only ${currentRemaining} are available.`);
       return;
     }
 
@@ -374,7 +374,7 @@ const App: React.FC = () => {
                       : 'bg-cyan-500 hover:bg-cyan-400 text-white shadow-cyan-500/30'
                     }`}
                   >
-                    {!allAnalyzed && garments.length > 0 ? 'Analyzing Collection...' : isOverLimit ? 'Daily Limit Reached' : willExceedLimit ? 'Insufficient Credits' : `Launch Campaign (${totalSelectedPoses} Renders)`}
+                    {!allAnalyzed && garments.length > 0 ? 'Analyzing Collection...' : isOverLimit ? 'Daily Limit Reached' : willExceedLimit ? 'Limit of 5 Reached' : `Launch Campaign (${totalSelectedPoses} Renders)`}
                   </button>
                   <div className="flex justify-between items-center px-6">
                     <div className="flex flex-col">
