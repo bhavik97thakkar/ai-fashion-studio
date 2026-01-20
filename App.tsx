@@ -144,7 +144,7 @@ const App: React.FC = () => {
       return;
     }
 
-    // NEW LOGIC: Cost is strictly per selected pose, regardless of how many reference images are uploaded
+    // COST LOGIC: One credit per final selected pose
     const totalPosesToGenerate = selectedPoses.length;
     const currentRemaining = DAILY_LIMIT - usage.count;
     
@@ -161,10 +161,9 @@ const App: React.FC = () => {
       const modelPrompt = `${selectedGender}, age ${selectedAge}, ${selectedEthnicity}, ${selectedBodyType}. ${creativeDetails}`;
       const poseOptions = POSES.filter(p => selectedPoses.includes(p.id));
       
-      // We iterate through selected poses, picking from available garments as references
+      // Iterate strictly through the poses, cycling through the reference images
       for (let i = 0; i < poseOptions.length; i++) {
         const poseObj = poseOptions[i];
-        // Cycle through uploaded garments if more poses are requested than images provided
         const garmentIndex = i % garments.length;
         const g = garments[garmentIndex];
         
@@ -231,7 +230,6 @@ const App: React.FC = () => {
     });
   };
 
-  // Cost is based purely on the number of poses selected
   const totalSelectedPoses = selectedPoses.length;
   const isOverLimit = usage.count >= DAILY_LIMIT;
   const willExceedLimit = (usage.count + totalSelectedPoses) > DAILY_LIMIT;
