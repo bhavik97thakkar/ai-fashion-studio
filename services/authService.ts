@@ -26,7 +26,8 @@ export const initGoogleAuth = (
   clientId: string,
   onUserAuthenticated: (user: User) => void,
 ) => {
-  if (!window.google || !window.google.accounts) {
+  if (!window.google?.accounts?.id) {
+    console.warn("Google Accounts SDK not loaded yet.");
     return;
   }
 
@@ -53,27 +54,31 @@ export const initGoogleAuth = (
 };
 
 export const renderGoogleButton = (containerId: string) => {
-  // Use a slight timeout to ensure Netlify's hydration doesn't conflict with Google's iframe injection
-  setTimeout(() => {
+  // Wait for SDK and DOM element to be ready
+  const checkInterval = setInterval(() => {
     const container = document.getElementById(containerId);
-    if (!window.google || !window.google.accounts || !container) return;
-
-    try {
-      window.google.accounts.id.renderButton(container, {
-        theme: "filled_black",
-        size: "large",
-        width: 250,
-        text: "signin_with",
-        shape: "pill",
-      });
-    } catch (err) {
-      console.error("Button Render Error:", err);
+    if (window.google?.accounts?.id && container) {
+      clearInterval(checkInterval);
+      try {
+        window.google.accounts.id.renderButton(container, {
+          theme: "filled_black",
+          size: "large",
+          width: 250,
+          text: "signin_with",
+          shape: "pill",
+        });
+      } catch (err) {
+        console.error("Button Render Error:", err);
+      }
     }
-  }, 100);
+  }, 200);
+
+  // Clear interval after 5 seconds to prevent memory leaks
+  setTimeout(() => clearInterval(checkInterval), 5000);
 };
 
 export const signOutGoogle = () => {
-  if (window.google && window.google.accounts) {
+  if (window.google?.accounts?.id) {
     window.google.accounts.id.disableAutoSelect();
   }
 };
