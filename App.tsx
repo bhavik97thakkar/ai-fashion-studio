@@ -15,7 +15,7 @@ import Loader from './components/Loader';
 import ModelOptions from './components/ModelOptions';
 
 const GOOGLE_CLIENT_ID = "309212162577-8tjqu29ece6h0dv9q0bh5h8h80ki0mgn.apps.googleusercontent.com";
-export const DAILY_LIMIT = 5; // Reverted back to 5 as requested
+export const DAILY_LIMIT = 5; 
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(() => {
@@ -45,6 +45,7 @@ const App: React.FC = () => {
       currentUsage = { count: 0, lastReset: now.toISOString() };
     }
 
+    // Reset logic: If date has changed, reset count to 0
     const lastDate = new Date(currentUsage.lastReset).toDateString();
     if (now.toDateString() !== lastDate) {
       currentUsage = { count: 0, lastReset: now.toISOString() };
@@ -150,7 +151,7 @@ const App: React.FC = () => {
     const currentRemaining = DAILY_LIMIT - usage.count;
     
     if (currentRemaining < totalPosesToGenerate) {
-      setError(`Insufficient credits. You need ${totalPosesToGenerate} tokens for this session, but only ${currentRemaining} are available.`);
+      setError(`Insufficient credits. Session requires ${totalPosesToGenerate} tokens. You have ${currentRemaining} remaining. Please reduce garments or poses.`);
       return;
     }
 
@@ -374,7 +375,7 @@ const App: React.FC = () => {
                       : 'bg-cyan-500 hover:bg-cyan-400 text-white shadow-cyan-500/30'
                     }`}
                   >
-                    {!allAnalyzed && garments.length > 0 ? 'Analyzing Collection...' : isOverLimit ? 'Daily Limit Reached' : willExceedLimit ? 'Limit of 5 Reached' : `Launch Campaign (${totalSelectedPoses} Renders)`}
+                    {!allAnalyzed && garments.length > 0 ? 'Analyzing Collection...' : isOverLimit ? 'Daily Limit Reached' : willExceedLimit ? `Exceeds 5-Render Limit` : `Launch Campaign (${totalSelectedPoses} Renders)`}
                   </button>
                   <div className="flex justify-between items-center px-6">
                     <div className="flex flex-col">
