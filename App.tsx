@@ -106,7 +106,6 @@ const App: React.FC = () => {
       authService.initGoogleAuth(GOOGLE_CLIENT_ID, (u) => {
         setUser(u);
         localStorage.setItem('auth_user', JSON.stringify(u));
-        // Use timeout to avoid potential race conditions with state updates
         setTimeout(() => syncAllUserData(u.email), 0);
       });
       if (!user) authService.renderGoogleButton('google-signin-container');
@@ -137,7 +136,7 @@ const App: React.FC = () => {
         selectedSceneId,
         modelPrompt,
         poseDescriptions,
-        (idx, total) => setLoadingMessage(`Crafting Render ${idx}/${total}... (Taking ~15s per frame)`)
+        (idx, total) => setLoadingMessage(`Crafting Frame ${idx}/${total}... HD rendering takes ~15s per pose.`)
       );
 
       if (images.length > 0) {
@@ -158,13 +157,18 @@ const App: React.FC = () => {
         const newHistory = [newEntry, ...history].slice(0, 15);
         setHistory(newHistory);
         localStorage.setItem(`history_${user.email}`, JSON.stringify(newHistory));
+        
+        // Auto-scroll to result
+        setTimeout(() => {
+          document.getElementById('production-output')?.scrollIntoView({ behavior: 'smooth' });
+        }, 100);
       }
     } catch (e: any) {
       if (e.message === "RESELECT_KEY") {
-        setError("Production session expired. Please re-select your API key.");
+        setError("API Key session expired or invalid. Please re-select.");
         window.aistudio?.openSelectKey();
       } else {
-        setError("Production failed. Please try again with fewer poses.");
+        setError("Production failed. The server might be overloaded. Please try again with fewer poses.");
       }
     } finally {
       setIsLoading(false);
@@ -194,7 +198,7 @@ const App: React.FC = () => {
     return (
       <div className="min-h-screen bg-black flex flex-col items-center justify-center p-6 text-center">
         <h2 className="text-4xl font-black text-white mb-6 uppercase italic tracking-tighter">API KEY REQUIRED</h2>
-        <p className="text-gray-500 mb-8 max-w-md uppercase text-[10px] tracking-widest font-bold">A high-performance Gemini 3 Pro API key is required to render HD fashion assets.</p>
+        <p className="text-gray-500 mb-8 max-w-md uppercase text-[10px] tracking-widest font-bold">A valid API key is required to render high-fidelity fashion assets.</p>
         <button onClick={() => window.aistudio?.openSelectKey()} className="bg-cyan-500 hover:bg-cyan-400 text-white font-black py-4 px-10 rounded-2xl shadow-2xl uppercase tracking-widest text-xs transition-all hover:scale-105 active:scale-95">Select API Key</button>
       </div>
     );
@@ -214,14 +218,14 @@ const App: React.FC = () => {
         {isLoading && <Loader message={loadingMessage} />}
         
         {error && (
-          <div className="mb-8 bg-red-500/10 border border-red-500/40 p-5 rounded-[2rem] text-red-400 text-[11px] font-black uppercase tracking-widest flex justify-between items-center animate-in fade-in zoom-in-95">
+          <div className="mb-8 bg-red-500/10 border border-red-500/40 p-5 rounded-[2rem] text-red-400 text-[11px] font-black uppercase tracking-widest flex justify-between items-center animate-in fade-in slide-in-from-top-4">
             <span>{error}</span>
             <button onClick={() => setError(null)} className="bg-red-500/20 px-4 py-1.5 rounded-xl hover:bg-red-500/40 transition-colors">Dismiss</button>
           </div>
         )}
 
         {!user ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center animate-in fade-in slide-in-from-bottom-10 duration-700">
+          <div className="flex flex-col items-center justify-center py-20 text-center animate-in fade-in slide-in-from-bottom-10 duration-1000">
             <h2 className="text-8xl font-black text-white mb-6 tracking-tighter uppercase italic">STUDIO<span className="text-cyan-500 text-glow">PRO</span></h2>
             <p className="text-gray-500 uppercase tracking-[0.5em] text-[11px] mb-14 font-bold max-w-sm leading-relaxed">Identity-Synced Professional Fashion Production</p>
             <div id="google-signin-container" className="scale-125 transition-all hover:scale-110 active:scale-95" />
@@ -345,7 +349,7 @@ const App: React.FC = () => {
                       <button 
                         key={p.id} 
                         onClick={() => togglePose(p.id)} 
-                        className={`px-5 py-3 rounded-2xl border text-[10px] font-black uppercase tracking-[0.15em] transition-all duration-300 ${selectedPoses.includes(p.id) ? 'bg-cyan-500 border-cyan-500 text-white shadow-lg' : 'bg-gray-950 border-gray-800 text-gray-600 hover:border-gray-500'}`}
+                        className={`px-5 py-3 rounded-2xl border text-[10px] font-black uppercase tracking-[0.15em] transition-all duration-300 ${selectedPoses.includes(p.id) ? 'bg-cyan-500 border-cyan-500 text-white shadow-lg shadow-cyan-500/20' : 'bg-gray-950 border-gray-800 text-gray-600 hover:border-gray-500'}`}
                       >
                         {p.label}
                       </button>

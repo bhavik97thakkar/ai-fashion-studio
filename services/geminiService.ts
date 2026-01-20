@@ -12,6 +12,8 @@ const fileToGenerativePart = (base64Data: string, mimeType: string) => {
   };
 };
 
+const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
+
 const handleGeminiError = (error: any) => {
   const msg = error.message?.toLowerCase() || "";
   if (
@@ -21,6 +23,13 @@ const handleGeminiError = (error: any) => {
     msg.includes("invalid")
   ) {
     throw new Error("RESELECT_KEY");
+  }
+  if (
+    msg.includes("503") ||
+    msg.includes("overloaded") ||
+    msg.includes("deadline")
+  ) {
+    return "RETRY";
   }
   throw error;
 };
@@ -37,7 +46,7 @@ export const analyzeGarment = async (
       contents: {
         parts: [
           {
-            text: "Analyze garment for photoshoot. JSON: {garmentType, fabric, colorPalette:[], style, gender:'Male'|'Female'|'Unisex', uniquenessLevel:'Unique'|'Common'}",
+            text: "Analyze this garment for a professional photoshoot. Return JSON: {garmentType, fabric, colorPalette:[], style, gender:'Male'|'Female'|'Unisex', uniquenessLevel:'Unique'|'Common'}",
           },
           imagePart,
         ],
@@ -68,7 +77,12 @@ export const analyzeGarment = async (
 
     return JSON.parse(response.text || "{}");
   } catch (error: any) {
-    return handleGeminiError(error);
+    const action = handleGeminiError(error);
+    if (action === "RETRY") {
+      await delay(2000);
+      return analyzeGarment(base64Image);
+    }
+    throw error;
   }
 };
 
@@ -86,61 +100,65 @@ export const generatePhotoshoot = async (
     "Professional fashion studio background";
   const results: PhotoshootImage[] = [];
 
-  // Concise, high-impact instructions for faster generation
   const baseSystemPrompt = `
-        Professional high-end fashion photography. 
-        Subject: ${modelPrompt}. 
-        Setting: ${sceneDescription}. 
-        Apparel: The specific ${analysis.style} ${analysis.garmentType} provided in reference.
-        Style: Commercial, 8k resolution, photorealistic, cinematic lighting.
+        High-end commercial fashion photography. 
+        Model: ${modelPrompt}. 
+        Set: ${sceneDescription}. 
+        Garment: A ${analysis.style} ${analysis.garmentType} in ${analysis.colorPalette.join(", ")}.
+        Quality: 8k resolution, cinematic lighting, sharp focus on garment texture.
     `;
 
   let masterReferenceB64: string | null = null;
 
   for (let i = 0; i < poses.length; i++) {
-    onProgress(i + 1, poses.length);
+    let attempts = 0;
+    const maxAttempts = 3;
 
-    try {
-      const parts: any[] = [fileToGenerativePart(garmentImage, "image/jpeg")];
+    while (attempts < maxAttempts) {
+      onProgress(i + 1, poses.length);
+      try {
+        const parts: any[] = [fileToGenerativePart(garmentImage, "image/jpeg")];
+        let promptText = "";
 
-      let promptText = "";
+        if (i === 0) {
+          promptText = `${baseSystemPrompt} Pose: ${poses[i]}. Focus on high-fidelity facial features and fabric details.`;
+        } else if (masterReferenceB64) {
+          parts.push(fileToGenerativePart(masterReferenceB64, "image/png"));
+          promptText = `${baseSystemPrompt} Pose: ${poses[i]}. CLONE MODEL IDENTITY AND LIGHTING from reference image.`;
+        }
 
-      if (i === 0) {
-        promptText = `${baseSystemPrompt} Pose: ${poses[i]}. Keep garment details sharp and accurate.`;
-      } else if (masterReferenceB64) {
-        // Pass previous result to maintain character/background consistency
-        parts.push(fileToGenerativePart(masterReferenceB64, "image/png"));
-        promptText = `${baseSystemPrompt} Pose: ${poses[i]}. MAINTAIN SAME MODEL FACE AND LIGHTING as the reference.`;
-      }
+        parts.push({ text: promptText });
 
-      parts.push({ text: promptText });
-
-      const response = await ai.models.generateContent({
-        model: IMAGE_MODEL,
-        contents: { parts },
-        config: {
-          imageConfig: {
-            aspectRatio: "3:4",
-            imageSize: "1K",
+        const response = await ai.models.generateContent({
+          model: IMAGE_MODEL,
+          contents: { parts },
+          config: {
+            imageConfig: { aspectRatio: "3:4", imageSize: "1K" },
           },
-        },
-      });
-
-      const imagePart = response.candidates?.[0]?.content?.parts.find(
-        (p) => p.inlineData,
-      );
-      if (imagePart?.inlineData) {
-        const b64 = imagePart.inlineData.data;
-        results.push({
-          id: `img-${Date.now()}-${i}`,
-          src: `data:image/png;base64,${b64}`,
         });
 
-        // Track first result for consistency across poses
-        if (i === 0) masterReferenceB64 = b64;
+        const imagePart = response.candidates?.[0]?.content?.parts.find(
+          (p) => p.inlineData,
+        );
+        if (imagePart?.inlineData) {
+          const b64 = imagePart.inlineData.data;
+          results.push({
+            id: `img-${Date.now()}-${i}`,
+            src: `data:image/png;base64,${b64}`,
+          });
+          if (i === 0) masterReferenceB64 = b64;
+          break;
+        }
+        throw new Error("Empty response");
+      } catch (error: any) {
+        const action = handleGeminiError(error);
+        if (action === "RETRY") {
+          attempts++;
+          await delay(1000 * Math.pow(2, attempts));
+        } else {
+          throw error;
+        }
       }
-    } catch (error: any) {
-      return handleGeminiError(error);
     }
   }
   return results;
@@ -158,7 +176,7 @@ export const editImage = async (
         parts: [
           fileToGenerativePart(base64Image, "image/jpeg"),
           {
-            text: `Apply fashion edit: ${prompt}. Keep model identity and background identical.`,
+            text: `Fashion Refinement: ${prompt}. Maintain model face and environment.`,
           },
         ],
       },
@@ -172,7 +190,7 @@ export const editImage = async (
     if (!part?.inlineData) throw new Error("Edit failed");
     return `data:image/png;base64,${part.inlineData.data}`;
   } catch (error: any) {
-    return handleGeminiError(error);
+    throw error;
   }
 };
 
@@ -192,6 +210,6 @@ export const generateImage = async (prompt: string): Promise<string> => {
     if (!part?.inlineData) throw new Error("Generation failed");
     return `data:image/png;base64,${part.inlineData.data}`;
   } catch (error: any) {
-    return handleGeminiError(error);
+    throw error;
   }
 };
