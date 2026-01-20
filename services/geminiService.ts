@@ -1,58 +1,16 @@
-import { GoogleGenAI, Type } from "@google/genai";
-import {
-  GarmentAnalysis,
-  SceneId,
-  PhotoshootImage,
-  ModelGender,
-  ModelAge,
-  ModelEthnicity,
-  ModelBodyType,
-} from "../types";
+import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
+import { GarmentAnalysis, SceneId, PhotoshootImage } from "../types";
 import { SCENE_PRESETS } from "../constants";
 
-// Using Gemini 1.5 Flash as it has the most reliable free-tier availability
-// without requiring a mandatory billing account link in most regions.
-const STABLE_MODEL = "gemini-1.5-flash";
-
-/**
- * PRODUCTION-READY KEY RESOLVER
- */
-export const getActiveApiKey = () => {
-  const key =
-    (import.meta as any).env?.VITE_API_KEY ||
-    (import.meta as any).env?.API_KEY ||
-    process.env.API_KEY ||
-    process.env.VITE_API_KEY ||
-    (window as any)._ENV_?.API_KEY;
-
-  if (
-    key &&
-    typeof key === "string" &&
-    key.length > 30 &&
-    !key.includes("PLACEHOLDER")
-  ) {
-    const cleanKey = key
-      .replace(/['"‘“’”]+/g, "")
-      .replace(/\s/g, "")
-      .trim();
-    return cleanKey;
-  }
-  return null;
-};
-
-const getAI = () => {
-  const key = getActiveApiKey();
-  if (!key) throw new Error("AUTH_ERROR");
-  return new GoogleGenAI({ apiKey: key });
-};
+// Professional tier models
+const TEXT_MODEL = "gemini-3-pro-preview";
+const IMAGE_MODEL = "gemini-3-pro-image-preview";
+const BASIC_IMAGE_MODEL = "gemini-2.5-flash-image";
 
 const fileToGenerativePart = (base64Data: string, mimeType: string) => {
   const data = base64Data.includes(",") ? base64Data.split(",")[1] : base64Data;
   return {
-    inlineData: {
-      data,
-      mimeType: mimeType || "image/jpeg",
-    },
+    inlineData: { data, mimeType: mimeType || "image/jpeg" },
   };
 };
 
@@ -60,21 +18,19 @@ export const analyzeGarment = async (
   base64Image: string,
 ): Promise<GarmentAnalysis> => {
   try {
-    const ai = getAI();
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
     const imagePart = fileToGenerativePart(base64Image, "image/jpeg");
 
     const response = await ai.models.generateContent({
-      model: STABLE_MODEL,
-      contents: [
-        {
-          parts: [
-            {
-              text: "Analyze this garment for a fashion photoshoot. Return JSON: {garmentType, fabric, colorPalette:[], style, gender:'Male'|'Female'|'Unisex', uniquenessLevel:'Unique'|'Common'}",
-            },
-            imagePart,
-          ],
-        },
-      ],
+      model: TEXT_MODEL,
+      contents: {
+        parts: [
+          {
+            text: "Act as a world-class fashion director. Analyze this garment and return JSON according to the schema.",
+          },
+          imagePart,
+        ],
+      },
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -99,165 +55,112 @@ export const analyzeGarment = async (
       },
     });
 
-    const content = response.text;
-    if (!content) throw new Error("Empty AI response");
-    return JSON.parse(content) as GarmentAnalysis;
+    return JSON.parse(response.text || "{}");
   } catch (error: any) {
-    console.error("[STUDIO-AI] Analysis Error:", error);
-    if (
-      error.message?.includes("429") ||
-      error.message?.includes("quota") ||
-      error.message?.includes("limit: 0")
-    ) {
-      throw new Error("QUOTA_EXCEEDED");
-    }
-    throw new Error("ANALYSIS_FAILED");
+    if (error.message?.includes("Requested entity was not found"))
+      throw new Error("RESELECT_KEY");
+    throw error;
   }
 };
 
-export const generatePhotoshoot = async (
-  garments: { analysis: GarmentAnalysis; base64GarmentImage: string }[],
-  sceneId: SceneId,
-  gender: "Male" | "Female" | "Unisex",
-  modelDescription: string,
-  onProgress: (progress: number, total: number) => void,
-  customBackgroundImage?: string | null,
-  customModelImage?: string | null,
-  poses: string[] = [],
-): Promise<PhotoshootImage[]> => {
-  const ai = getAI();
-  let sceneDescription =
-    SCENE_PRESETS.find((s) => s.id === sceneId)?.description ||
-    "Professional fashion studio";
+/**
+ * Generates a standard image from a prompt using gemini-2.5-flash-image.
+ */
+export const generateImage = async (prompt: string): Promise<string> => {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
+  const response = await ai.models.generateContent({
+    model: BASIC_IMAGE_MODEL,
+    contents: prompt,
+  });
 
-  const allGarmentParts = garments.map((g) =>
-    fileToGenerativePart(g.base64GarmentImage, "image/jpeg"),
+  const imagePart = response.candidates?.[0]?.content?.parts.find(
+    (p) => p.inlineData,
   );
-  const allGeneratedImages: string[] = [];
+  if (!imagePart?.inlineData) throw new Error("Image generation failed");
+  return `data:image/png;base64,${imagePart.inlineData.data}`;
+};
+
+export const generatePhotoshoot = async (
+  garmentImage: string,
+  analysis: GarmentAnalysis,
+  sceneId: SceneId,
+  modelPrompt: string,
+  poses: string[],
+  onProgress: (index: number, total: number) => void,
+): Promise<PhotoshootImage[]> => {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
+  const scene =
+    SCENE_PRESETS.find((s) => s.id === sceneId)?.description || "Studio";
+  const results: PhotoshootImage[] = [];
 
   for (let i = 0; i < poses.length; i++) {
     onProgress(i + 1, poses.length);
-    const parts: any[] = [...allGarmentParts];
-
-    // Gemini 1.5 Flash doesn't natively generate images in the same way Imagen does through the generateContent endpoint
-    // It's a multimodal model that understands images, but image generation is a separate capability.
-    // If your key is strictly Free Tier, you might only have access to text/vision.
-
-    let prompt = `High-end editorial fashion photography. Model: ${modelDescription}. 
-        Pose: ${poses[i]}. Setting: ${sceneDescription}. 
-        Wearing: ${garments.map((g) => g.analysis.garmentType).join(", ")}. 
-        Lighting: Cinematic, 8K resolution, Vogue style.`;
-
-    if (customBackgroundImage) {
-      parts.push({ text: "Background reference:" });
-      parts.push(fileToGenerativePart(customBackgroundImage, "image/jpeg"));
-    }
-
-    if (customModelImage) {
-      parts.push({ text: "Model face reference:" });
-      parts.push(fileToGenerativePart(customModelImage, "image/jpeg"));
-    }
-
-    parts.push({ text: prompt });
 
     try {
-      // NOTE: In the Gemini API, 1.5-flash is multimodal but does not support text-to-image
-      // generation directly via generateContent. For real image generation, Imagen 3 or
-      // Gemini 2.0-flash (with billing) is required.
-      // However, we will attempt the call to see if your project has the Image Modality enabled.
       const response = await ai.models.generateContent({
-        model: STABLE_MODEL,
-        contents: [{ parts }],
+        model: IMAGE_MODEL,
+        contents: {
+          parts: [
+            fileToGenerativePart(garmentImage, "image/jpeg"),
+            {
+              text: `High-end fashion editorial. A professional model with ${modelPrompt} wearing EXACTLY this ${analysis.garmentType}. Pose: ${poses[i]}. Setting: ${scene}. Photorealistic, 8k, fashion magazine style.`,
+            },
+          ],
+        },
+        config: {
+          imageConfig: {
+            aspectRatio: "3:4",
+            imageSize: "1K",
+          },
+        },
       });
 
       const imagePart = response.candidates?.[0]?.content?.parts.find(
         (p) => p.inlineData,
       );
       if (imagePart?.inlineData) {
-        allGeneratedImages.push(
-          `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`,
-        );
-      } else {
-        // For users on the 100% free tier where image modality isn't enabled,
-        // we'll simulate the failure to provide a clear UI message.
-        console.error(
-          "This API Key does not support Image Generation. Upgrade to a paid billing plan in Google Cloud Console.",
-        );
-        throw new Error("IMAGE_MODALITY_UNAVAILABLE");
+        results.push({
+          id: `img-${Date.now()}-${i}`,
+          src: `data:image/png;base64,${imagePart.inlineData.data}`,
+        });
       }
-    } catch (e: any) {
-      console.error(`[STUDIO-AI] Render Error:`, e);
-      if (e.message?.includes("429") || e.message?.includes("limit: 0"))
-        throw new Error("QUOTA_EXCEEDED");
-      throw e;
+    } catch (error: any) {
+      if (error.message?.includes("Requested entity was not found"))
+        throw new Error("RESELECT_KEY");
+      console.error("Frame generation failed", error);
     }
   }
-
-  return allGeneratedImages.map((src, i) => ({
-    id: `res-${Date.now()}-${i}`,
-    src,
-  }));
+  return results;
 };
 
-export const enhanceModelPrompt = async (
-  g: ModelGender,
-  a: ModelAge,
-  e: ModelEthnicity,
-  b: ModelBodyType,
-  d: string,
+export const generateCreativeBrief = async (
+  analysis: GarmentAnalysis,
 ): Promise<string> => {
-  try {
-    const ai = getAI();
-    const response = await ai.models.generateContent({
-      model: STABLE_MODEL,
-      contents: [
-        {
-          parts: [
-            {
-              text: `Model profile: ${g}, ${a}, ${e} ethnicity, ${b} build. Styles: ${d}. Give a 1-sentence physical description.`,
-            },
-          ],
-        },
-      ],
-    });
-    return response.text?.trim() || "A professional fashion model";
-  } catch {
-    return `A ${g} model, ${a}, ${e} ethnicity`;
-  }
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
+  const response = await ai.models.generateContent({
+    model: TEXT_MODEL,
+    contents: `Create a professional photography brief for a ${analysis.style} ${analysis.garmentType}. Max 3 bullet points.`,
+  });
+  return response.text || "";
 };
 
 export const editImage = async (
   base64Image: string,
   prompt: string,
 ): Promise<string> => {
-  const ai = getAI();
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
   const response = await ai.models.generateContent({
-    model: STABLE_MODEL,
-    contents: [
-      {
-        parts: [
-          fileToGenerativePart(base64Image, "image/jpeg"),
-          { text: `Modify image: ${prompt}` },
-        ],
-      },
-    ],
+    model: BASIC_IMAGE_MODEL,
+    contents: {
+      parts: [
+        fileToGenerativePart(base64Image, "image/jpeg"),
+        { text: prompt },
+      ],
+    },
   });
   const part = response.candidates?.[0]?.content?.parts.find(
     (p) => p.inlineData,
   );
   if (!part?.inlineData) throw new Error("Edit failed");
-  return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-};
-
-export const generateImage = async (prompt: string): Promise<string> => {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: STABLE_MODEL,
-    contents: [{ parts: [{ text: prompt }] }],
-  });
-  const part = response.candidates?.[0]?.content?.parts.find(
-    (p) => p.inlineData,
-  );
-  if (!part?.inlineData) throw new Error("Generation failed");
-  return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+  return `data:image/png;base64,${part.inlineData.data}`;
 };
