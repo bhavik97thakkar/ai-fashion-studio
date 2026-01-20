@@ -87,11 +87,11 @@ export const generatePhotoshoot = async (
   const results: PhotoshootImage[] = [];
 
   const baseSystemPrompt = `
-        HIGH-END FASHION EDITORIAL. 
-        Model characteristics: ${modelPrompt}. 
-        Setting: ${sceneDescription}. 
-        Product: ${analysis.style} ${analysis.garmentType} in ${analysis.colorPalette.join(", ")}.
-        Photography style: Photorealistic, 8k, sharp focus, magazine quality, consistent lighting.
+        HIGH-END FASHION. 
+        Model: ${modelPrompt}. 
+        Set: ${sceneDescription}. 
+        Product: ${analysis.style} ${analysis.garmentType} (${analysis.colorPalette.join(", ")}).
+        Style: Photorealistic, magazine quality.
     `;
 
   let masterReferenceB64: string | null = null;
@@ -105,21 +105,10 @@ export const generatePhotoshoot = async (
       let promptText = "";
 
       if (i === 0) {
-        promptText = `
-                    ${baseSystemPrompt}
-                    ACTION: Full body fashion shot, ${poses[i]}.
-                    IMPORTANT: This is the reference frame. Create a distinct, high-quality model face and environment.
-                `.trim();
+        promptText = `${baseSystemPrompt} Pose: ${poses[i]}. Focus on high-quality model features.`;
       } else if (masterReferenceB64) {
         parts.push(fileToGenerativePart(masterReferenceB64, "image/png"));
-        promptText = `
-                    ${baseSystemPrompt}
-                    STRICT CHARACTER AND ENVIRONMENT LOCK:
-                    1. CLONE THE MODEL: Use the EXACT SAME face, features, hairstyle, and skin tone as seen in the second reference image.
-                    2. CLONE THE BACKGROUND: Use the EXACT SAME background, props, and lighting conditions as the second reference image.
-                    3. CHANGE ONLY THE POSE: The model is now in this specific pose: ${poses[i]}.
-                    Everything else must remain identical to maintain professional catalog consistency.
-                `.trim();
+        promptText = `${baseSystemPrompt} Pose: ${poses[i]}. CLONE MODEL FACE AND BACKGROUND EXACTLY from reference.`;
       }
 
       parts.push({ text: promptText });
@@ -145,9 +134,7 @@ export const generatePhotoshoot = async (
           src: `data:image/png;base64,${b64}`,
         });
 
-        if (i === 0) {
-          masterReferenceB64 = b64;
-        }
+        if (i === 0) masterReferenceB64 = b64;
       }
     } catch (error: any) {
       return handleGeminiError(error);
@@ -167,9 +154,7 @@ export const editImage = async (
       contents: {
         parts: [
           fileToGenerativePart(base64Image, "image/jpeg"),
-          {
-            text: `Refine this fashion photograph: ${prompt}. Maintain strict model identity and background consistency.`,
-          },
+          { text: `Refine: ${prompt}. Maintain model identity.` },
         ],
       },
     });

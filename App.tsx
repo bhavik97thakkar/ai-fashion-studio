@@ -56,7 +56,12 @@ const App: React.FC = () => {
     localStorage.setItem(usageKey, JSON.stringify(currentUsage));
 
     if (savedHistory) {
-      try { setHistory(JSON.parse(savedHistory)); } catch { setHistory([]); }
+      try { 
+        const parsed = JSON.parse(savedHistory);
+        setHistory(Array.isArray(parsed) ? parsed : []); 
+      } catch { 
+        setHistory([]); 
+      }
     }
   }, []);
 
@@ -102,7 +107,7 @@ const App: React.FC = () => {
       authService.initGoogleAuth(GOOGLE_CLIENT_ID, (u) => {
         setUser(u);
         localStorage.setItem('auth_user', JSON.stringify(u));
-        syncAllUserData(u.email);
+        setTimeout(() => syncAllUserData(u.email), 0);
       });
       if (!user) authService.renderGoogleButton('google-signin-container');
     }
@@ -123,7 +128,7 @@ const App: React.FC = () => {
     setIsLoading(true);
     setError(null);
     try {
-      const modelPrompt = `${selectedGender}, age ${selectedAge}, ${selectedEthnicity} ethnicity, ${selectedBodyType} build. ${creativeDetails}`;
+      const modelPrompt = `${selectedGender}, age ${selectedAge}, ${selectedEthnicity}, ${selectedBodyType}. ${creativeDetails}`;
       const poseDescriptions = POSES.filter(p => selectedPoses.includes(p.id)).map(p => p.description);
       
       const images = await geminiService.generatePhotoshoot(
@@ -132,7 +137,7 @@ const App: React.FC = () => {
         selectedSceneId,
         modelPrompt,
         poseDescriptions,
-        (idx, total) => setLoadingMessage(`Crafting View ${idx}/${total}...`)
+        (idx, total) => setLoadingMessage(`Rendering Shot ${idx}/${total}...`)
       );
 
       if (images.length > 0) {
@@ -156,10 +161,10 @@ const App: React.FC = () => {
       }
     } catch (e: any) {
       if (e.message === "RESELECT_KEY") {
-        setError("Your API key session expired. Please re-select your key.");
+        setError("API Key session expired. Please re-select your key.");
         window.aistudio?.openSelectKey();
       } else {
-        setError("Production interrupted. Ensure you have a paid API key.");
+        setError("Production interrupted. Please try fewer poses or check your connection.");
       }
     } finally {
       setIsLoading(false);
@@ -189,7 +194,7 @@ const App: React.FC = () => {
     return (
       <div className="min-h-screen bg-black flex flex-col items-center justify-center p-6 text-center">
         <h2 className="text-4xl font-black text-white mb-6 uppercase italic tracking-tighter">API KEY REQUIRED</h2>
-        <p className="text-gray-500 mb-8 max-w-md uppercase text-[10px] tracking-widest font-bold">Paid API key required for Gemini 3 Pro Vision.</p>
+        <p className="text-gray-500 mb-8 max-w-md uppercase text-[10px] tracking-widest font-bold">A paid API key is mandatory for Gemini 3 Pro Vision production.</p>
         <button onClick={() => window.aistudio?.openSelectKey()} className="bg-cyan-500 hover:bg-cyan-400 text-white font-black py-4 px-10 rounded-2xl shadow-2xl uppercase tracking-widest text-xs transition-all hover:scale-105 active:scale-95">Select API Key</button>
       </div>
     );
@@ -209,7 +214,7 @@ const App: React.FC = () => {
         {isLoading && <Loader message={loadingMessage} />}
         
         {error && (
-          <div className="mb-8 bg-red-500/10 border border-red-500/40 p-5 rounded-[2rem] text-red-400 text-[11px] font-black uppercase tracking-widest flex justify-between items-center">
+          <div className="mb-8 bg-red-500/10 border border-red-500/40 p-5 rounded-[2rem] text-red-400 text-[11px] font-black uppercase tracking-widest flex justify-between items-center animate-pulse">
             <span>{error}</span>
             <button onClick={() => setError(null)} className="bg-red-500/20 px-4 py-1.5 rounded-xl hover:bg-red-500/40">Dismiss</button>
           </div>
@@ -280,7 +285,7 @@ const App: React.FC = () => {
                             <div className="w-10 h-10 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
                           </div>
                         )}
-                        <button onClick={() => setGarments([])} className="absolute top-6 right-6 bg-black/50 text-white w-10 h-10 flex items-center justify-center rounded-full hover:bg-red-500">×</button>
+                        <button onClick={() => setGarments([])} className="absolute top-6 right-6 bg-black/50 text-white w-10 h-10 flex items-center justify-center rounded-full hover:bg-red-500 transition-all">×</button>
                       </div>
                     ))}
                   </div>
@@ -292,22 +297,22 @@ const App: React.FC = () => {
                       <span className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-pulse"></span>
                       Studio Vault
                     </h3>
-                    <div className="grid grid-cols-1 gap-12">
+                    <div className="grid grid-cols-1 gap-10">
                       {history.map(entry => (
                         <div key={entry.id} className="group/session">
-                           <div className="flex justify-between items-center px-2 mb-4">
-                              <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">{new Date(entry.timestamp).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})}</span>
-                              <span className="text-[9px] font-black text-cyan-500/60 uppercase tracking-widest group-hover/session:text-cyan-400 transition-colors">{entry.images.length} Perspectives</span>
+                           <div className="flex justify-between items-center px-2 mb-3">
+                              <span className="text-[9px] font-black text-gray-600 uppercase tracking-widest">{new Date(entry.timestamp).toLocaleDateString([], {month:'short', day:'numeric'})}</span>
+                              <span className="text-[9px] font-black text-cyan-500/40 uppercase tracking-widest group-hover/session:text-cyan-400 transition-colors">{entry.images.length} Poses</span>
                            </div>
                            <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide snap-x px-1">
-                            {entry.images.map((img, idx) => (
+                            {entry.images.map((img) => (
                               <button 
                                 key={img.id} 
                                 onClick={() => {
                                   setGeneratedImages(entry.images);
                                   document.getElementById('production-output')?.scrollIntoView({ behavior: 'smooth' });
                                 }} 
-                                className="flex-shrink-0 w-36 aspect-[3/4] rounded-[2rem] overflow-hidden border border-gray-800 hover:border-cyan-500 transition-all bg-gray-900 snap-start shadow-xl hover:shadow-cyan-500/10 hover:-translate-y-1 duration-500"
+                                className="flex-shrink-0 w-32 aspect-[3/4] rounded-[1.5rem] overflow-hidden border border-gray-800 hover:border-cyan-500 transition-all bg-gray-900 snap-start shadow-xl hover:-translate-y-1 duration-300"
                               >
                                 <img src={img.src} className="w-full h-full object-cover" loading="lazy" />
                               </button>
@@ -320,7 +325,7 @@ const App: React.FC = () => {
                 )}
               </div>
 
-              <div className="bg-gray-900/30 border border-gray-800/40 p-10 rounded-[3.5rem] space-y-10 shadow-3xl backdrop-blur-3xl h-fit sticky top-28">
+              <div className="bg-gray-900/30 border border-gray-800/40 p-10 rounded-[3.5rem] space-y-10 shadow-3xl backdrop-blur-3xl h-fit lg:sticky lg:top-28">
                 <ModelOptions 
                   selectedGender={selectedGender} onGenderChange={setSelectedGender} 
                   selectedAge={selectedAge} onAgeChange={setSelectedAge} 
@@ -340,7 +345,7 @@ const App: React.FC = () => {
                       <button 
                         key={p.id} 
                         onClick={() => togglePose(p.id)} 
-                        className={`px-5 py-3 rounded-2xl border text-[10px] font-black uppercase tracking-[0.15em] transition-all duration-300 ${selectedPoses.includes(p.id) ? 'bg-cyan-500 border-cyan-500 text-white shadow-lg shadow-cyan-500/20' : 'bg-gray-950 border-gray-800 text-gray-600 hover:border-gray-500'}`}
+                        className={`px-5 py-3 rounded-2xl border text-[10px] font-black uppercase tracking-[0.15em] transition-all duration-300 ${selectedPoses.includes(p.id) ? 'bg-cyan-500 border-cyan-500 text-white shadow-lg' : 'bg-gray-950 border-gray-800 text-gray-600 hover:border-gray-500'}`}
                       >
                         {p.label}
                       </button>
@@ -357,7 +362,7 @@ const App: React.FC = () => {
                   <button 
                     onClick={handleGenerate} 
                     disabled={isLoading || garments.length === 0 || isOverLimit || willExceedLimit || !garments[0]?.analysis} 
-                    className={`w-full font-black py-7 rounded-[2rem] shadow-2xl uppercase tracking-[0.5em] text-[11px] italic transition-all ${
+                    className={`w-full font-black py-7 rounded-[2rem] shadow-2xl uppercase tracking-[0.5em] text-[11px] italic transition-all active:scale-[0.98] ${
                       (isOverLimit || willExceedLimit)
                       ? 'bg-gray-800/50 text-gray-700 cursor-not-allowed border border-gray-800' 
                       : 'bg-cyan-500 hover:bg-cyan-400 text-white shadow-cyan-500/30'
