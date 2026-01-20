@@ -39,8 +39,6 @@ const App: React.FC = () => {
     let currentUsage: UsageLimit;
 
     if (cloudUsage) {
-      currentUsage = { count: cloudUsage.count, last_reset: cloudUsage.last_reset } as any;
-      // Map cloud keys to our local type if needed
       currentUsage = { count: cloudUsage.count, lastReset: cloudUsage.last_reset };
     } else if (savedUsage) {
       currentUsage = JSON.parse(savedUsage);
@@ -148,20 +146,20 @@ const App: React.FC = () => {
         const newEntry: HistoryEntry = {
           id: Date.now().toString(),
           timestamp: new Date().toISOString(),
-          garmentPreview: images[0].src, 
+          garmentPreview: garments[0].preview, 
           images: images,
           details: modelPrompt
         };
-        const newHistory = [newEntry, ...history].slice(0, 10);
+        const newHistory = [newEntry, ...history].slice(0, 15);
         setHistory(newHistory);
         localStorage.setItem(`history_${user.email}`, JSON.stringify(newHistory));
       }
     } catch (e: any) {
       if (e.message === "RESELECT_KEY") {
-        setError("Your API key session expired or is invalid. Please re-select your key.");
+        setError("Your API key session expired. Please re-select your key.");
         window.aistudio?.openSelectKey();
       } else {
-        setError("Production interrupted. Ensure you have a paid API key selected.");
+        setError("Production interrupted. Ensure you have a paid API key.");
       }
     } finally {
       setIsLoading(false);
@@ -191,7 +189,7 @@ const App: React.FC = () => {
     return (
       <div className="min-h-screen bg-black flex flex-col items-center justify-center p-6 text-center">
         <h2 className="text-4xl font-black text-white mb-6 uppercase italic tracking-tighter">API KEY REQUIRED</h2>
-        <p className="text-gray-500 mb-8 max-w-md uppercase text-[10px] tracking-widest font-bold">This application uses Gemini 3 Pro Vision which requires a valid paid API key for image generation.</p>
+        <p className="text-gray-500 mb-8 max-w-md uppercase text-[10px] tracking-widest font-bold">Paid API key required for Gemini 3 Pro Vision.</p>
         <button onClick={() => window.aistudio?.openSelectKey()} className="bg-cyan-500 hover:bg-cyan-400 text-white font-black py-4 px-10 rounded-2xl shadow-2xl uppercase tracking-widest text-xs transition-all hover:scale-105 active:scale-95">Select API Key</button>
       </div>
     );
@@ -211,9 +209,9 @@ const App: React.FC = () => {
         {isLoading && <Loader message={loadingMessage} />}
         
         {error && (
-          <div className="mb-8 bg-red-500/10 border border-red-500/40 p-5 rounded-[2rem] text-red-400 text-[11px] font-black uppercase tracking-widest flex justify-between items-center animate-in fade-in slide-in-from-top-4">
+          <div className="mb-8 bg-red-500/10 border border-red-500/40 p-5 rounded-[2rem] text-red-400 text-[11px] font-black uppercase tracking-widest flex justify-between items-center">
             <span>{error}</span>
-            <button onClick={() => setError(null)} className="bg-red-500/20 px-4 py-1.5 rounded-xl hover:bg-red-500/40 transition-all">Dismiss</button>
+            <button onClick={() => setError(null)} className="bg-red-500/20 px-4 py-1.5 rounded-xl hover:bg-red-500/40">Dismiss</button>
           </div>
         )}
 
@@ -221,7 +219,7 @@ const App: React.FC = () => {
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <h2 className="text-8xl font-black text-white mb-6 tracking-tighter uppercase italic">STUDIO<span className="text-cyan-500 text-glow">PRO</span></h2>
             <p className="text-gray-500 uppercase tracking-[0.5em] text-[11px] mb-14 font-bold max-w-sm leading-relaxed">Identity-Synced Professional Fashion Production</p>
-            <div id="google-signin-container" className="scale-125 transition-all hover:scale-130 active:scale-95" />
+            <div id="google-signin-container" className="scale-125 transition-all" />
           </div>
         ) : (
           <div className="space-y-20">
@@ -239,7 +237,7 @@ const App: React.FC = () => {
                       analysis: null,
                       isLoading: true,
                     })));
-                    setGarments(prev => [...prev, ...newGarments]);
+                    setGarments(newGarments);
                     
                     if (newGarments.length > 0) {
                       try {
@@ -262,8 +260,7 @@ const App: React.FC = () => {
                       analysis: null,
                       isLoading: true,
                     })));
-                    setGarments(prev => [...prev, ...newGarments]);
-                    
+                    setGarments(newGarments);
                     if (newGarments.length > 0) {
                       try {
                         const analysis = await geminiService.analyzeGarment(newGarments[0].preview);
@@ -276,36 +273,54 @@ const App: React.FC = () => {
                 ) : (
                   <div className="grid grid-cols-2 gap-6">
                     {garments.map(g => (
-                      <div key={g.id} className="relative aspect-[3/4] rounded-[2.5rem] overflow-hidden border border-gray-800 group bg-black shadow-2xl">
-                        <img src={g.preview} className="w-full h-full object-cover transition-all group-hover:scale-110 duration-1000" />
+                      <div key={g.id} className="relative aspect-[3/4] rounded-[2.5rem] overflow-hidden border border-gray-800 bg-black shadow-2xl">
+                        <img src={g.preview} className="w-full h-full object-cover" />
                         {g.isLoading && (
                           <div className="absolute inset-0 bg-black/80 flex items-center justify-center backdrop-blur-md">
                             <div className="w-10 h-10 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
                           </div>
                         )}
-                        <button onClick={() => setGarments([])} className="absolute top-6 right-6 bg-black/50 text-white w-10 h-10 flex items-center justify-center rounded-full opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500 hover:rotate-90">×</button>
+                        <button onClick={() => setGarments([])} className="absolute top-6 right-6 bg-black/50 text-white w-10 h-10 flex items-center justify-center rounded-full hover:bg-red-500">×</button>
                       </div>
                     ))}
                   </div>
                 )}
                 
                 {history.length > 0 && (
-                  <div className="pt-10 space-y-6">
-                    <h3 className="text-[11px] font-black text-gray-500 uppercase tracking-[0.4em] px-2">Studio Vault</h3>
-                    <div className="flex gap-5 overflow-x-auto pb-8 scrollbar-hide snap-x">
+                  <div className="pt-10 space-y-8">
+                    <h3 className="text-[12px] font-black text-gray-400 uppercase tracking-[0.4em] px-2 flex items-center gap-3">
+                      <span className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-pulse"></span>
+                      Studio Vault
+                    </h3>
+                    <div className="grid grid-cols-1 gap-12">
                       {history.map(entry => (
-                        <button key={entry.id} onClick={() => setGeneratedImages(entry.images)} className="flex-shrink-0 w-32 group relative snap-start">
-                          <div className="aspect-[3/4] rounded-3xl overflow-hidden border border-gray-800 group-hover:border-cyan-500 transition-all bg-gray-900 shadow-2xl">
-                            <img src={entry.garmentPreview} className="w-full h-full object-cover opacity-50 group-hover:opacity-100 transition-all grayscale group-hover:grayscale-0" />
+                        <div key={entry.id} className="group/session">
+                           <div className="flex justify-between items-center px-2 mb-4">
+                              <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">{new Date(entry.timestamp).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})}</span>
+                              <span className="text-[9px] font-black text-cyan-500/60 uppercase tracking-widest group-hover/session:text-cyan-400 transition-colors">{entry.images.length} Perspectives</span>
+                           </div>
+                           <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide snap-x px-1">
+                            {entry.images.map((img, idx) => (
+                              <button 
+                                key={img.id} 
+                                onClick={() => {
+                                  setGeneratedImages(entry.images);
+                                  document.getElementById('production-output')?.scrollIntoView({ behavior: 'smooth' });
+                                }} 
+                                className="flex-shrink-0 w-36 aspect-[3/4] rounded-[2rem] overflow-hidden border border-gray-800 hover:border-cyan-500 transition-all bg-gray-900 snap-start shadow-xl hover:shadow-cyan-500/10 hover:-translate-y-1 duration-500"
+                              >
+                                <img src={img.src} className="w-full h-full object-cover" loading="lazy" />
+                              </button>
+                            ))}
                           </div>
-                        </button>
+                        </div>
                       ))}
                     </div>
                   </div>
                 )}
               </div>
 
-              <div className="bg-gray-900/30 border border-gray-800/40 p-10 rounded-[3.5rem] space-y-10 shadow-3xl backdrop-blur-3xl relative overflow-hidden">
+              <div className="bg-gray-900/30 border border-gray-800/40 p-10 rounded-[3.5rem] space-y-10 shadow-3xl backdrop-blur-3xl h-fit sticky top-28">
                 <ModelOptions 
                   selectedGender={selectedGender} onGenderChange={setSelectedGender} 
                   selectedAge={selectedAge} onAgeChange={setSelectedAge} 
@@ -325,7 +340,7 @@ const App: React.FC = () => {
                       <button 
                         key={p.id} 
                         onClick={() => togglePose(p.id)} 
-                        className={`px-5 py-3 rounded-2xl border text-[10px] font-black uppercase tracking-[0.15em] transition-all duration-300 ${selectedPoses.includes(p.id) ? 'bg-cyan-500 border-cyan-500 text-white shadow-xl shadow-cyan-500/20' : 'bg-gray-950 border-gray-800 text-gray-600 hover:border-gray-600 hover:text-gray-300'}`}
+                        className={`px-5 py-3 rounded-2xl border text-[10px] font-black uppercase tracking-[0.15em] transition-all duration-300 ${selectedPoses.includes(p.id) ? 'bg-cyan-500 border-cyan-500 text-white shadow-lg shadow-cyan-500/20' : 'bg-gray-950 border-gray-800 text-gray-600 hover:border-gray-500'}`}
                       >
                         {p.label}
                       </button>
@@ -342,7 +357,7 @@ const App: React.FC = () => {
                   <button 
                     onClick={handleGenerate} 
                     disabled={isLoading || garments.length === 0 || isOverLimit || willExceedLimit || !garments[0]?.analysis} 
-                    className={`w-full font-black py-7 rounded-[2rem] shadow-2xl uppercase tracking-[0.5em] text-[11px] italic transition-all active:scale-[0.98] ${
+                    className={`w-full font-black py-7 rounded-[2rem] shadow-2xl uppercase tracking-[0.5em] text-[11px] italic transition-all ${
                       (isOverLimit || willExceedLimit)
                       ? 'bg-gray-800/50 text-gray-700 cursor-not-allowed border border-gray-800' 
                       : 'bg-cyan-500 hover:bg-cyan-400 text-white shadow-cyan-500/30'
