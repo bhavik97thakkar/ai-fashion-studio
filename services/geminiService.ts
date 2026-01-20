@@ -2,7 +2,6 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { GarmentAnalysis, SceneId, PhotoshootImage } from "../types";
 import { SCENE_PRESETS } from "../constants";
 
-// Updated to correct Gemini 3 models as per latest technical guidelines
 const TEXT_MODEL = "gemini-3-flash-preview";
 const IMAGE_MODEL = "gemini-3-pro-image-preview";
 
@@ -80,37 +79,52 @@ export const generatePhotoshoot = async (
     "Professional Studio";
   const results: PhotoshootImage[] = [];
 
-  // Visual Consistency Anchor: We define the identity and environment once to be reused exactly for every pose
-  const photoshootIdentity = `
-        CONSISTENCY PROTOCOL:
-        1. MODEL IDENTITY: Use the EXACT same person with identical facial features, hair style, and skin tone for every image.
-        2. ENVIRONMENT: Use the EXACT same background setting, lighting setup, and color grading for every image.
-        3. PRODUCT: The model must be wearing the garment shown in the reference image.
-        
-        SESSION SPECS:
-        - Model: ${modelPrompt}
-        - Setting: ${sceneDescription}
-        - Garment: ${analysis.style} ${analysis.garmentType} in ${analysis.colorPalette.join(", ")}
+  // The Master Prompt ensures initial direction is high quality
+  const baseSystemPrompt = `
+        High-end professional fashion editorial photography. 
+        Model: ${modelPrompt}. 
+        Setting: ${sceneDescription}. 
+        Garment: ${analysis.style} ${analysis.garmentType} in ${analysis.colorPalette.join(", ")}.
+        Quality: 8k resolution, photorealistic, sharp focus, magazine quality.
     `;
+
+  let firstGeneratedImageBase64: string | null = null;
 
   for (let i = 0; i < poses.length; i++) {
     onProgress(i + 1, poses.length);
 
     try {
+      const parts: any[] = [fileToGenerativePart(garmentImage, "image/jpeg")];
+
+      let promptText = "";
+
+      if (i === 0) {
+        // First image: establish the "Master Look"
+        promptText = `
+                    ${baseSystemPrompt}
+                    ACTION: Full body shot, ${poses[i]}.
+                    Establish a definitive model face, hair, and lighting style.
+                `.trim();
+      } else if (firstGeneratedImageBase64) {
+        // Subsequent images: Use the first image as a visual reference
+        parts.push(
+          fileToGenerativePart(firstGeneratedImageBase64, "image/png"),
+        );
+        promptText = `
+                    ${baseSystemPrompt}
+                    STRICT VISUAL CONSISTENCY: 
+                    1. Use the EXACT SAME PERSON (face, features, hair) as seen in the second reference image.
+                    2. Use the EXACT SAME BACKGROUND and lighting as the second reference image.
+                    3. The only change is the pose.
+                    ACTION: Current pose is ${poses[i]}.
+                `.trim();
+      }
+
+      parts.push({ text: promptText });
+
       const response = await ai.models.generateContent({
         model: IMAGE_MODEL,
-        contents: {
-          parts: [
-            fileToGenerativePart(garmentImage, "image/jpeg"),
-            {
-              text: `
-                                ${photoshootIdentity}
-                                CURRENT POSE: ${poses[i]}.
-                                High-end professional fashion editorial photography, 8k resolution, photorealistic, sharp focus on fabric texture, magazine quality.
-                            `.trim(),
-            },
-          ],
-        },
+        contents: { parts },
         config: {
           imageConfig: {
             aspectRatio: "3:4",
@@ -123,10 +137,16 @@ export const generatePhotoshoot = async (
         (p) => p.inlineData,
       );
       if (imagePart?.inlineData) {
+        const b64 = imagePart.inlineData.data;
         results.push({
           id: `img-${Date.now()}-${i}`,
-          src: `data:image/png;base64,${imagePart.inlineData.data}`,
+          src: `data:image/png;base64,${b64}`,
         });
+
+        // Save the very first result to use as the visual anchor for all other poses
+        if (i === 0) {
+          firstGeneratedImageBase64 = b64;
+        }
       }
     } catch (error: any) {
       if (
