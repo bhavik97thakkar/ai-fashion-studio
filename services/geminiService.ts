@@ -4,7 +4,6 @@ import { SCENE_PRESETS } from "../constants";
 
 // Updated to correct Gemini 3 models as per latest technical guidelines
 const TEXT_MODEL = "gemini-3-flash-preview";
-const PRO_TEXT_MODEL = "gemini-3-pro-preview";
 const IMAGE_MODEL = "gemini-3-pro-image-preview";
 
 const fileToGenerativePart = (base64Data: string, mimeType: string) => {
@@ -18,7 +17,6 @@ export const analyzeGarment = async (
   base64Image: string,
 ): Promise<GarmentAnalysis> => {
   try {
-    // ALWAYS create instance right before call to use latest key
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
     const imagePart = fileToGenerativePart(base64Image, "image/jpeg");
 
@@ -58,7 +56,6 @@ export const analyzeGarment = async (
 
     return JSON.parse(response.text || "{}");
   } catch (error: any) {
-    // Handle NOT_FOUND (404) or Requested entity not found which signals bad key or no billing
     if (
       error.message?.toLowerCase().includes("not found") ||
       error.message?.includes("404")
@@ -77,11 +74,24 @@ export const generatePhotoshoot = async (
   poses: string[],
   onProgress: (index: number, total: number) => void,
 ): Promise<PhotoshootImage[]> => {
-  // Create new instance to capture updated API_KEY
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
-  const scene =
-    SCENE_PRESETS.find((s) => s.id === sceneId)?.description || "Studio";
+  const sceneDescription =
+    SCENE_PRESETS.find((s) => s.id === sceneId)?.description ||
+    "Professional Studio";
   const results: PhotoshootImage[] = [];
+
+  // Visual Consistency Anchor: We define the identity and environment once to be reused exactly for every pose
+  const photoshootIdentity = `
+        CONSISTENCY PROTOCOL:
+        1. MODEL IDENTITY: Use the EXACT same person with identical facial features, hair style, and skin tone for every image.
+        2. ENVIRONMENT: Use the EXACT same background setting, lighting setup, and color grading for every image.
+        3. PRODUCT: The model must be wearing the garment shown in the reference image.
+        
+        SESSION SPECS:
+        - Model: ${modelPrompt}
+        - Setting: ${sceneDescription}
+        - Garment: ${analysis.style} ${analysis.garmentType} in ${analysis.colorPalette.join(", ")}
+    `;
 
   for (let i = 0; i < poses.length; i++) {
     onProgress(i + 1, poses.length);
@@ -93,7 +103,11 @@ export const generatePhotoshoot = async (
           parts: [
             fileToGenerativePart(garmentImage, "image/jpeg"),
             {
-              text: `High-end fashion photography. Professional model with ${modelPrompt} wearing this ${analysis.garmentType}. Pose: ${poses[i]}. Setting: ${scene}. 8k photorealistic.`,
+              text: `
+                                ${photoshootIdentity}
+                                CURRENT POSE: ${poses[i]}.
+                                High-end professional fashion editorial photography, 8k resolution, photorealistic, sharp focus on fabric texture, magazine quality.
+                            `.trim(),
             },
           ],
         },
@@ -136,7 +150,9 @@ export const editImage = async (
     contents: {
       parts: [
         fileToGenerativePart(base64Image, "image/jpeg"),
-        { text: prompt },
+        {
+          text: `Refine this fashion photograph: ${prompt}. Maintain model identity and background consistency.`,
+        },
       ],
     },
   });
