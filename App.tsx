@@ -3,6 +3,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { SceneId, PhotoshootImage, UploadedGarment, ModelGender, ModelAge, ModelEthnicity, ModelBodyType, User, UsageLimit, HistoryEntry } from './types';
 import * as geminiService from './services/geminiService';
 import * as authService from './services/authService';
+import * as cloudDB from './services/supabaseService';
 import { fileToBase64 } from './utils/fileUtils';
 import { POSES } from './constants';
 
@@ -16,7 +17,6 @@ import ModelOptions from './components/ModelOptions';
 
 const GOOGLE_CLIENT_ID = "309212162577-8tjqu29ece6h0dv9q0bh5h8h80ki0mgn.apps.googleusercontent.com";
 const DAILY_LIMIT = 5;
-const MAX_HISTORY_ITEMS = 10;
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(() => {
@@ -25,55 +25,53 @@ const App: React.FC = () => {
   });
   
   const [hasKey, setHasKey] = useState(false);
-  
-  // Usage is now managed in a useEffect to link it to the specific logged-in user email
   const [usage, setUsage] = useState<UsageLimit>({ count: 0, lastReset: new Date().toISOString() });
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
 
-  // Load usage specific to the user email when user changes
+  const syncAllUserData = useCallback(async (email: string) => {
+    console.log(`[Sync] Verifying credits for ${email}...`);
+    
+    // 1. Fetch from Cloud (Supabase)
+    const cloudUsage = await cloudDB.syncUsageFromCloud(email);
+    
+    // 2. Fetch from Local
+    const usageKey = `usage_limit_${email}`;
+    const historyKey = `history_${email}`;
+    const savedUsage = localStorage.getItem(usageKey);
+    const savedHistory = localStorage.getItem(historyKey);
+    const now = new Date();
+    
+    let currentUsage: UsageLimit;
+
+    if (cloudUsage) {
+      currentUsage = { count: cloudUsage.count, lastReset: cloudUsage.last_reset };
+    } else if (savedUsage) {
+      currentUsage = JSON.parse(savedUsage);
+    } else {
+      currentUsage = { count: 0, lastReset: now.toISOString() };
+    }
+
+    // Daily Reset Check logic (Applies to both Cloud and Local state)
+    const lastDate = new Date(currentUsage.lastReset).toDateString();
+    if (now.toDateString() !== lastDate) {
+      currentUsage = { count: 0, lastReset: now.toISOString() };
+      // Sync the reset back to cloud if user is logged in
+      cloudDB.updateUsageInCloud(email, 0, now.toISOString());
+    }
+    
+    setUsage(currentUsage);
+    localStorage.setItem(usageKey, JSON.stringify(currentUsage));
+
+    if (savedHistory) {
+      try { setHistory(JSON.parse(savedHistory)); } catch { setHistory([]); }
+    }
+  }, []);
+
   useEffect(() => {
     if (user) {
-      const usageKey = `usage_limit_${user.email}`;
-      const saved = localStorage.getItem(usageKey);
-      const now = new Date();
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          const lastDate = new Date(parsed.lastReset).toDateString();
-          if (now.toDateString() !== lastDate) {
-            const resetUsage = { count: 0, lastReset: now.toISOString() };
-            setUsage(resetUsage);
-            localStorage.setItem(usageKey, JSON.stringify(resetUsage));
-          } else {
-            setUsage(parsed);
-          }
-        } catch (e) {
-          setUsage({ count: 0, lastReset: now.toISOString() });
-        }
-      } else {
-        const initialUsage = { count: 0, lastReset: now.toISOString() };
-        setUsage(initialUsage);
-        localStorage.setItem(usageKey, JSON.stringify(initialUsage));
-      }
+      syncAllUserData(user.email);
     }
-  }, [user]);
-
-  // Sync usage back to storage whenever it changes
-  useEffect(() => {
-    if (user) {
-      const usageKey = `usage_limit_${user.email}`;
-      localStorage.setItem(usageKey, JSON.stringify(usage));
-    }
-  }, [usage, user]);
-
-  const [history, setHistory] = useState<HistoryEntry[]>(() => {
-    const saved = localStorage.getItem('photoshoot_history');
-    if (!saved) return [];
-    try {
-      return JSON.parse(saved);
-    } catch {
-      return [];
-    }
-  });
+  }, [user, syncAllUserData]);
 
   const [garments, setGarments] = useState<UploadedGarment[]>([]);
   const [selectedSceneId, setSelectedSceneId] = useState<SceneId>(SceneId.Auto);
@@ -91,40 +89,10 @@ const App: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const safeSaveHistory = (items: HistoryEntry[]) => {
-    let currentItems = [...items];
-    while (currentItems.length > 0) {
-      try {
-        const serialized = JSON.stringify(currentItems);
-        localStorage.setItem('photoshoot_history', serialized);
-        break;
-      } catch (e) {
-        if (e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED')) {
-          currentItems.pop();
-          if (currentItems.length === 0) {
-            localStorage.removeItem('photoshoot_history');
-            break;
-          }
-        } else {
-          throw e;
-        }
-      }
-    }
-    return currentItems;
-  };
-
-  useEffect(() => {
-    const prunedHistory = safeSaveHistory(history);
-    if (prunedHistory.length !== history.length) {
-      setHistory(prunedHistory);
-    }
-  }, [history]);
-
   useEffect(() => {
     const checkKey = async () => {
-      if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
-        const selected = await window.aistudio.hasSelectedApiKey();
-        setHasKey(selected);
+      if (window.aistudio?.hasSelectedApiKey) {
+        setHasKey(await window.aistudio.hasSelectedApiKey());
       } else {
         setHasKey(!!process.env.API_KEY);
       }
@@ -133,84 +101,33 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (user) {
-      try {
-        localStorage.setItem('auth_user', JSON.stringify(user));
-      } catch (e) {
-        console.warn("Could not save user session to localStorage");
-      }
-    }
-  }, [user]);
-
-  useEffect(() => {
     if (window.google) {
-      authService.initGoogleAuth(GOOGLE_CLIENT_ID, setUser);
+      authService.initGoogleAuth(GOOGLE_CLIENT_ID, (u) => {
+        setUser(u);
+        localStorage.setItem('auth_user', JSON.stringify(u));
+        syncAllUserData(u.email);
+      });
       if (!user) authService.renderGoogleButton('google-signin-container');
     }
-  }, [user]);
-
-  const handleSelectKey = async () => {
-    if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
-      try {
-        await window.aistudio.openSelectKey();
-        setHasKey(true);
-      } catch (err) {
-        setError("Could not open API Key selector.");
-      }
-    } else {
-      setError("AI Studio environment not detected.");
-    }
-  };
-
-  const handleImageUpload = useCallback(async (files: File[]) => {
-    if (!user) return;
-    setError(null);
-    const newGarments = await Promise.all(files.map(async file => ({
-      id: `${file.name}-${Date.now()}`,
-      file,
-      preview: await fileToBase64(file),
-      analysis: null,
-      isLoading: true,
-    })));
-    setGarments(prev => [...prev, ...newGarments]);
-  }, [user]);
-
-  useEffect(() => {
-    const analyze = async () => {
-      const pending = garments.filter(g => g.isLoading && !g.analysis);
-      for (const g of pending) {
-        try {
-          const analysis = await geminiService.analyzeGarment(g.preview);
-          setGarments(prev => prev.map(item => item.id === g.id ? { ...item, analysis, isLoading: false } : item));
-        } catch (e: any) {
-          if (e.message === "RESELECT_KEY") {
-            setHasKey(false);
-            setError("API Key invalid. Please re-select.");
-          } else {
-            setError("Analysis failed. Try again.");
-          }
-          setGarments(prev => prev.map(item => item.id === g.id ? { ...item, isLoading: false } : item));
-        }
-      }
-    };
-    analyze();
-  }, [garments]);
+  }, [user, syncAllUserData]);
 
   const handleGenerate = async () => {
+    if (!user) {
+      setError("Please sign in to generate images.");
+      return;
+    }
+
     const remaining = DAILY_LIMIT - usage.count;
-    
-    if (usage.count >= DAILY_LIMIT) {
-      setError("Out of credits for today. Come back tomorrow!");
+    if (remaining <= 0) {
+      setError("Daily limit reached. Credits sync across your account.");
       return;
     }
 
     if (selectedPoses.length > remaining) {
-      setError(`Insufficient credits. You only have ${remaining} generation${remaining === 1 ? '' : 's'} left for today, but you selected ${selectedPoses.length} modes.`);
+      setError(`Only ${remaining} credits left today.`);
       return;
     }
 
-    if (garments.length === 0 || !garments[0].analysis) return;
-    
     setIsLoading(true);
     setError(null);
     try {
@@ -219,48 +136,56 @@ const App: React.FC = () => {
       
       const images = await geminiService.generatePhotoshoot(
         garments[0].preview,
-        garments[0].analysis,
+        garments[0].analysis!,
         selectedSceneId,
         modelPrompt,
         poseDescriptions,
-        (idx, total) => setLoadingMessage(`Crafting Model Shot ${idx} of ${total}...`)
+        (idx, total) => setLoadingMessage(`Crafting View ${idx}/${total}...`)
       );
 
       if (images.length > 0) {
         setGeneratedImages(images);
-        // Charge for each image generated
-        setUsage(prev => ({ ...prev, count: prev.count + images.length }));
+        const newCount = usage.count + images.length;
+        const newUsage = { ...usage, count: newCount };
         
-        const newHistoryEntry: HistoryEntry = {
+        // UPDATE LOCAL
+        setUsage(newUsage);
+        localStorage.setItem(`usage_limit_${user.email}`, JSON.stringify(newUsage));
+        
+        // UPDATE CLOUD (The key fix for Incognito)
+        await cloudDB.updateUsageInCloud(user.email, newCount, usage.lastReset);
+        
+        // Update History
+        const newEntry: HistoryEntry = {
           id: Date.now().toString(),
           timestamp: new Date().toISOString(),
           garmentPreview: images[0].src, 
           images: images,
           details: modelPrompt
         };
-        
-        setHistory(prev => [newHistoryEntry, ...prev].slice(0, MAX_HISTORY_ITEMS));
+        const newHistory = [newEntry, ...history].slice(0, 10);
+        setHistory(newHistory);
+        localStorage.setItem(`history_${user.email}`, JSON.stringify(newHistory));
       }
-
     } catch (e: any) {
-      if (e.message === "RESELECT_KEY") {
-        setHasKey(false);
-        setError("Please re-select your API key.");
-      } else {
-        setError("Generation failed. Check billing or prompt.");
-      }
+      setError("Production interrupted. Check your network or API key.");
     } finally {
       setIsLoading(false);
     }
   };
 
   const togglePose = (poseId: string) => {
+    const remaining = DAILY_LIMIT - usage.count;
     setSelectedPoses(prev => {
       if (prev.includes(poseId)) {
         return prev.length > 1 ? prev.filter(i => i !== poseId) : prev;
       } else {
         if (prev.length >= 5) {
-          setError("Maximum of 5 modes can be selected at once.");
+          setError("Max 5 poses per shoot.");
+          return prev;
+        }
+        if (prev.length + 1 > remaining) {
+          setError(`Limit reached. You have ${remaining} credits left.`);
           return prev;
         }
         return [...prev, poseId];
@@ -268,33 +193,25 @@ const App: React.FC = () => {
     });
   };
 
-  const loadFromHistory = (entry: HistoryEntry) => {
-    setGeneratedImages(entry.images);
-    const resultsSection = document.getElementById('production-output');
-    if (resultsSection) {
-      resultsSection.scrollIntoView({ behavior: 'smooth' });
-    }
-  };
-
   const isOverLimit = usage.count >= DAILY_LIMIT;
-  const willExceedLimit = usage.count + selectedPoses.length > DAILY_LIMIT;
+  const willExceedLimit = (usage.count + selectedPoses.length) > DAILY_LIMIT;
 
   if (!hasKey) {
     return (
-      <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-center p-6 text-center">
-        <h2 className="text-5xl font-black text-white mb-6 tracking-tighter uppercase italic">Studio <span className="text-cyan-500">Pro</span></h2>
-        <button onClick={handleSelectKey} className="bg-cyan-500 hover:bg-cyan-400 text-white font-black py-4 px-10 rounded-2xl shadow-2xl uppercase tracking-widest text-xs transition-all">Select API Key</button>
+      <div className="min-h-screen bg-black flex flex-col items-center justify-center p-6 text-center">
+        <h2 className="text-4xl font-black text-white mb-6 uppercase italic tracking-tighter">API KEY REQUIRED</h2>
+        <button onClick={() => window.aistudio?.openSelectKey()} className="bg-cyan-500 hover:bg-cyan-400 text-white font-black py-4 px-10 rounded-2xl shadow-2xl uppercase tracking-widest text-xs transition-all hover:scale-105 active:scale-95">Unlock Studio</button>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white font-sans">
+    <div className="min-h-screen bg-gray-950 text-white font-sans selection:bg-cyan-500/30">
       <Header 
         user={user} 
         usage={usage} 
         onSignIn={() => {}} 
-        onSignOut={() => { authService.signOutGoogle(); setUser(null); }} 
+        onSignOut={() => { authService.signOutGoogle(); setUser(null); localStorage.removeItem('auth_user'); }} 
         onUpgrade={() => {}} 
       />
       
@@ -302,62 +219,93 @@ const App: React.FC = () => {
         {isLoading && <Loader message={loadingMessage} />}
         
         {error && (
-          <div className="mb-8 bg-red-900/20 border border-red-500/30 p-4 rounded-2xl text-red-400 text-xs flex justify-between items-center animate-pulse">
-            <span className="font-bold">{error}</span>
-            <button onClick={() => setError(null)} className="font-black uppercase text-[10px] bg-red-500/20 px-3 py-1 rounded-lg">Dismiss</button>
+          <div className="mb-8 bg-red-500/10 border border-red-500/40 p-5 rounded-[2rem] text-red-400 text-[11px] font-black uppercase tracking-widest flex justify-between items-center animate-in fade-in slide-in-from-top-4">
+            <span>{error}</span>
+            <button onClick={() => setError(null)} className="bg-red-500/20 px-4 py-1.5 rounded-xl hover:bg-red-500/40 transition-all">Dismiss</button>
           </div>
         )}
 
         {!user ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
-            <h2 className="text-7xl font-black text-white mb-4 tracking-tighter uppercase italic">STUDIO<span className="text-cyan-500">PRO</span></h2>
-            <div id="google-signin-container" className="scale-110" />
+            <h2 className="text-8xl font-black text-white mb-6 tracking-tighter uppercase italic">STUDIO<span className="text-cyan-500 text-glow">PRO</span></h2>
+            <p className="text-gray-500 uppercase tracking-[0.5em] text-[11px] mb-14 font-bold max-w-sm leading-relaxed">Identity-Synced Professional Fashion Production</p>
+            <div id="google-signin-container" className="scale-125 transition-all hover:scale-130 active:scale-95" />
           </div>
         ) : (
-          <div className="space-y-16">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
-              <div className="space-y-8">
-                <div className="flex justify-between items-end border-b border-gray-800 pb-4">
-                  <h2 className="text-4xl font-black uppercase tracking-tighter">Moodboard</h2>
-                  <button onClick={() => fileInputRef.current?.click()} className="text-[10px] font-black uppercase text-cyan-500 hover:text-cyan-400 transition-colors">+ Add Garment</button>
-                  <input type="file" ref={fileInputRef} onChange={(e) => e.target.files && handleImageUpload(Array.from(e.target.files))} className="hidden" accept="image/*" />
+          <div className="space-y-20">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-16">
+              <div className="space-y-10">
+                <div className="flex justify-between items-end border-b border-gray-800 pb-6">
+                  <h2 className="text-5xl font-black uppercase tracking-tighter italic">Moodboard</h2>
+                  <button onClick={() => fileInputRef.current?.click()} className="text-[11px] font-black uppercase text-cyan-500 hover:text-cyan-300 transition-colors tracking-[0.2em]">+ Add Reference</button>
+                  <input type="file" ref={fileInputRef} onChange={(e) => e.target.files && (async () => {
+                    const files = Array.from(e.target.files!);
+                    const newGarments = await Promise.all(files.map(async file => ({
+                      id: `${file.name}-${Date.now()}`,
+                      file,
+                      preview: await fileToBase64(file),
+                      analysis: null,
+                      isLoading: true,
+                    })));
+                    setGarments(prev => [...prev, ...newGarments]);
+                    
+                    // Trigger analysis for the first garment
+                    if (newGarments.length > 0) {
+                      try {
+                        const analysis = await geminiService.analyzeGarment(newGarments[0].preview);
+                        setGarments(prev => prev.map(g => g.id === newGarments[0].id ? { ...g, analysis, isLoading: false } : g));
+                      } catch (err: any) {
+                        setGarments(prev => prev.map(g => g.id === newGarments[0].id ? { ...g, isLoading: false, error: "Analysis failed" } : g));
+                        if (err.message === "RESELECT_KEY") window.aistudio?.openSelectKey();
+                      }
+                    }
+                  })()} className="hidden" accept="image/*" />
                 </div>
                 
                 {garments.length === 0 ? (
-                  <ImageUploader onImageUpload={handleImageUpload} />
+                  <ImageUploader onImageUpload={async (files) => {
+                    const newGarments = await Promise.all(files.map(async file => ({
+                      id: `${file.name}-${Date.now()}`,
+                      file,
+                      preview: await fileToBase64(file),
+                      analysis: null,
+                      isLoading: true,
+                    })));
+                    setGarments(prev => [...prev, ...newGarments]);
+                    
+                    if (newGarments.length > 0) {
+                      try {
+                        const analysis = await geminiService.analyzeGarment(newGarments[0].preview);
+                        setGarments(prev => prev.map(g => g.id === newGarments[0].id ? { ...g, analysis, isLoading: false } : g));
+                      } catch (err: any) {
+                        setGarments(prev => prev.map(g => g.id === newGarments[0].id ? { ...g, isLoading: false, error: "Analysis failed" } : g));
+                      }
+                    }
+                  }} />
                 ) : (
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-2 gap-6">
                     {garments.map(g => (
-                      <div key={g.id} className="relative aspect-[3/4] rounded-3xl overflow-hidden border border-gray-800 group bg-black shadow-xl">
-                        <img src={g.preview} className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-700" />
+                      <div key={g.id} className="relative aspect-[3/4] rounded-[2.5rem] overflow-hidden border border-gray-800 group bg-black shadow-2xl">
+                        <img src={g.preview} className="w-full h-full object-cover transition-all group-hover:scale-110 duration-1000" />
                         {g.isLoading && (
-                          <div className="absolute inset-0 bg-black/60 flex items-center justify-center backdrop-blur-sm">
-                            <div className="w-6 h-6 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
+                          <div className="absolute inset-0 bg-black/80 flex items-center justify-center backdrop-blur-md">
+                            <div className="w-10 h-10 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
                           </div>
                         )}
-                        <button onClick={() => setGarments([])} className="absolute top-4 right-4 bg-black/50 text-white w-8 h-8 flex items-center justify-center rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500">×</button>
+                        <button onClick={() => setGarments([])} className="absolute top-6 right-6 bg-black/50 text-white w-10 h-10 flex items-center justify-center rounded-full opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500 hover:rotate-90">×</button>
                       </div>
                     ))}
                   </div>
                 )}
-
+                
                 {history.length > 0 && (
-                  <div className="pt-8 space-y-4">
-                    <div className="flex justify-between items-center">
-                      <h3 className="text-[11px] font-black text-gray-500 uppercase tracking-[0.2em]">History</h3>
-                    </div>
-                    <div className="flex gap-5 overflow-x-auto pb-6 scrollbar-hide snap-x">
+                  <div className="pt-10 space-y-6">
+                    <h3 className="text-[11px] font-black text-gray-500 uppercase tracking-[0.4em] px-2">Studio Vault</h3>
+                    <div className="flex gap-5 overflow-x-auto pb-8 scrollbar-hide snap-x">
                       {history.map(entry => (
-                        <button 
-                          key={entry.id} 
-                          onClick={() => loadFromHistory(entry)}
-                          className="flex-shrink-0 w-32 group relative snap-start"
-                        >
-                          <div className="aspect-[3/4] rounded-[1.5rem] overflow-hidden border border-gray-800 group-hover:border-cyan-500/50 transition-all shadow-2xl bg-gray-900">
-                            <img src={entry.garmentPreview} className="w-full h-full object-cover" />
-                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                               <span className="text-[8px] font-black uppercase bg-cyan-500 text-white px-3 py-1 rounded-full shadow-lg">Load Result</span>
-                            </div>
+                        <button key={entry.id} onClick={() => setGeneratedImages(entry.images)} className="flex-shrink-0 w-32 group relative snap-start">
+                          <div className="aspect-[3/4] rounded-3xl overflow-hidden border border-gray-800 group-hover:border-cyan-500 transition-all bg-gray-900 shadow-2xl">
+                            <img src={entry.garmentPreview} className="w-full h-full object-cover opacity-50 group-hover:opacity-100 transition-all grayscale group-hover:grayscale-0" />
                           </div>
                         </button>
                       ))}
@@ -366,7 +314,7 @@ const App: React.FC = () => {
                 )}
               </div>
 
-              <div className="bg-gray-900/40 border border-gray-800/50 p-10 rounded-[3rem] space-y-10 shadow-2xl backdrop-blur-3xl">
+              <div className="bg-gray-900/30 border border-gray-800/40 p-10 rounded-[3.5rem] space-y-10 shadow-3xl backdrop-blur-3xl relative overflow-hidden">
                 <ModelOptions 
                   selectedGender={selectedGender} onGenderChange={setSelectedGender} 
                   selectedAge={selectedAge} onAgeChange={setSelectedAge} 
@@ -377,16 +325,16 @@ const App: React.FC = () => {
                 />
                 
                 <div className="space-y-6">
-                  <div className="flex justify-between items-center">
-                    <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Pose Structure</h3>
-                    <span className="text-[8px] font-bold text-cyan-500 uppercase">Max 5 Selected</span>
+                  <div className="flex justify-between items-center px-1">
+                    <h3 className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Shoot Profile</h3>
+                    <span className="text-[10px] font-black text-cyan-500 uppercase bg-cyan-500/10 px-3 py-1 rounded-full">{selectedPoses.length}/5 Selected</span>
                   </div>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-2.5">
                     {POSES.map(p => (
                       <button 
                         key={p.id} 
                         onClick={() => togglePose(p.id)} 
-                        className={`px-4 py-2 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all ${selectedPoses.includes(p.id) ? 'bg-cyan-500 border-cyan-500 text-white shadow-lg shadow-cyan-500/20' : 'bg-gray-950 border-gray-800 text-gray-500 hover:border-gray-600'}`}
+                        className={`px-5 py-3 rounded-2xl border text-[10px] font-black uppercase tracking-[0.15em] transition-all duration-300 ${selectedPoses.includes(p.id) ? 'bg-cyan-500 border-cyan-500 text-white shadow-xl shadow-cyan-500/20' : 'bg-gray-950 border-gray-800 text-gray-600 hover:border-gray-600 hover:text-gray-300'}`}
                       >
                         {p.label}
                       </button>
@@ -395,35 +343,39 @@ const App: React.FC = () => {
                 </div>
 
                 <div className="space-y-6">
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Atmosphere</h3>
+                  <h3 className="text-[11px] font-black text-gray-500 uppercase tracking-widest px-1">Atmosphere</h3>
                   <SceneSelector selectedSceneId={selectedSceneId} onSelectScene={setSelectedSceneId} customBackgroundImage={null} onCustomBackgroundChange={() => {}} />
                 </div>
 
-                <div className="space-y-3">
+                <div className="pt-6 space-y-6">
                   <button 
                     onClick={handleGenerate} 
-                    disabled={isLoading || garments.length === 0 || isOverLimit || willExceedLimit} 
-                    className={`w-full font-black py-6 rounded-3xl shadow-2xl uppercase tracking-[0.3em] text-[11px] transition-all active:scale-[0.98] ${
+                    disabled={isLoading || garments.length === 0 || isOverLimit || willExceedLimit || !garments[0]?.analysis} 
+                    className={`w-full font-black py-7 rounded-[2rem] shadow-2xl uppercase tracking-[0.5em] text-[11px] italic transition-all active:scale-[0.98] ${
                       (isOverLimit || willExceedLimit)
-                      ? 'bg-gray-800 text-gray-600 cursor-not-allowed border border-gray-700/50' 
-                      : 'bg-cyan-500 hover:bg-cyan-400 text-white shadow-cyan-500/10'
+                      ? 'bg-gray-800/50 text-gray-700 cursor-not-allowed border border-gray-800' 
+                      : 'bg-cyan-500 hover:bg-cyan-400 text-white shadow-cyan-500/30'
                     }`}
                   >
-                    {isOverLimit ? 'Daily Limit Reached' : willExceedLimit ? 'Insufficient Credits' : 'Start Production'}
+                    {isOverLimit ? 'Daily Limit Reached' : willExceedLimit ? 'Insufficient Credits' : 'Launch Production'}
                   </button>
-                  <div className="flex justify-between items-center px-2">
-                    <p className="text-[9px] text-gray-600 uppercase font-black tracking-widest">
-                      {Math.max(0, DAILY_LIMIT - usage.count)} / {DAILY_LIMIT} Credits Remaining
-                    </p>
-                    <p className="text-[8px] text-gray-700 font-bold uppercase">Linked to {user.email}</p>
+                  <div className="flex justify-between items-center px-6">
+                    <div className="flex flex-col">
+                      <p className="text-[10px] text-gray-600 uppercase font-black tracking-[0.2em]">Balance</p>
+                      <p className="text-base font-black text-cyan-500 tracking-tighter">{Math.max(0, DAILY_LIMIT - usage.count)} Remaining</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] text-gray-600 uppercase font-black tracking-[0.2em]">Account Status</p>
+                      <p className="text-[11px] font-bold text-gray-400 truncate max-w-[140px] lowercase">{user.email}</p>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
 
             {generatedImages.length > 0 && (
-              <div id="production-output" className="pt-12 border-t border-gray-800 scroll-mt-24">
-                <h2 className="text-3xl font-black uppercase tracking-tighter mb-8 text-center">Final Renders</h2>
+              <div id="production-output" className="pt-20 border-t border-gray-800 animate-in fade-in slide-in-from-bottom-12 duration-1000">
+                <h2 className="text-5xl font-black uppercase tracking-tighter mb-16 text-center italic">Final <span className="text-cyan-500">Renders</span></h2>
                 <PhotoshootGallery images={generatedImages} onEditRequest={setEditingImage} isPro={true} />
               </div>
             )}
@@ -442,7 +394,7 @@ const App: React.FC = () => {
               const src = await geminiService.editImage(editingImage.src, p);
               setGeneratedImages(prev => prev.map(img => img.id === editingImage.id ? { ...img, src } : img));
               setEditingImage(null);
-            } catch (e) {
+            } catch {
               setError("Refinement failed.");
             } finally {
               setIsLoading(false);
