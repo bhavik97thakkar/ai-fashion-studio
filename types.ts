@@ -1,4 +1,4 @@
-import React from 'react';
+import React from "react";
 
 export enum SceneId {
   Studio = "studio",
@@ -38,8 +38,8 @@ export interface GarmentAnalysis {
   fabric: string;
   colorPalette: string[];
   style: string;
-  gender: 'Male' | 'Female' | 'Unisex';
-  uniquenessLevel: 'Unique' | 'Common';
+  gender: "Male" | "Female" | "Unisex";
+  uniquenessLevel: "Unique" | "Common";
 }
 
 export interface PhotoshootImage {
@@ -47,7 +47,7 @@ export interface PhotoshootImage {
   src: string;
 }
 
-export type ImageQuality = 'standard' | 'hd';
+export type ImageQuality = "standard" | "hd";
 
 export interface UploadedGarment {
   id: string;
@@ -58,10 +58,24 @@ export interface UploadedGarment {
   error?: string;
 }
 
-export type ModelGender = 'Male' | 'Female' | 'Unisex';
-export type ModelAge = '18-25' | '26-35' | '36-45' | '46+';
-export type ModelEthnicity = 'Any' | 'Asian' | 'Black' | 'Caucasian' | 'Hispanic' | 'Middle Eastern' | 'South Asian' | 'Mixed';
-export type ModelBodyType = 'Any' | 'Slim' | 'Athletic' | 'Average' | 'Curvy' | 'Plus-size';
+export type ModelGender = "Male" | "Female" | "Unisex";
+export type ModelAge = "18-25" | "26-35" | "36-45" | "46+";
+export type ModelEthnicity =
+  | "Any"
+  | "Asian"
+  | "Black"
+  | "Caucasian"
+  | "Hispanic"
+  | "Middle Eastern"
+  | "South Asian"
+  | "Mixed";
+export type ModelBodyType =
+  | "Any"
+  | "Slim"
+  | "Athletic"
+  | "Average"
+  | "Curvy"
+  | "Plus-size";
 
 export interface User {
   id: string;
@@ -73,4 +87,12 @@ export interface User {
 export interface UsageLimit {
   count: number;
   lastReset: string;
+}
+
+export interface HistoryEntry {
+  id: string;
+  timestamp: string;
+  garmentPreview: string;
+  images: PhotoshootImage[];
+  details: string;
 }
